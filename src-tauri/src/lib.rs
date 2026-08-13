@@ -155,6 +155,9 @@ fn handle_menu_action(app: &AppHandle, id: &str) {
             }
         }
         menu::MENU_QUIT => {
+            // stop() is a safe no-op in attach mode (pid stays None there),
+            // so this only tears down a server we actually spawned.
+            server::stop(&state.server);
             app.exit(0);
         }
         _ => {}
