@@ -16,6 +16,8 @@ UI you get by opening `http://127.0.0.1:3080` in a browser, with the same data u
   OS-assigned port.
 - Native menu & tray: open the UI in your default browser, restart the server, reveal the data
   directory, quit.
+- Tray-resident: closing the window hides it instead of stopping the server; only "退出"
+  (quit) from the menu/tray actually exits.
 - Crash recovery: an unexpected server exit is restarted once automatically, then surfaced on a
   retry screen with logs.
 - Minimal attack surface: the harness page runs as a plain remote page in the webview and is given
@@ -81,7 +83,9 @@ the shell — every shell action goes through the native menu/tray or the local 
       `engines.node` is `^22.19.0 || >=24.0.0`; Node 23 is intentionally excluded upstream as an
       EOL/non-LTS line) + the `dsh` node_modules inside the NSIS installer, so the app runs on
       machines without Node.js
-- [ ] Tray-resident mode (close to tray keeps the server running)
+- [x] Tray-resident mode: closing the window hides it and leaves the server running; a one-time
+      notification explains this on first close each run. Only the menu/tray "退出" action stops
+      the server and exits
 - [ ] Auto-update (`tauri-plugin-updater`)
 - [ ] macOS build — partially started: `src-tauri/src/server.rs`'s process handling
       (`node.exe`/`taskkill`/`cmd /C npm`) is now behind a `platform` section with non-Windows

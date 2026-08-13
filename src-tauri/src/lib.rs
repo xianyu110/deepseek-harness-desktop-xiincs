@@ -9,17 +9,21 @@
 mod menu;
 mod server;
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
 use tauri::{AppHandle, Manager, State, WindowEvent};
+use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
 
 use server::{DshServer, ServerStatus};
 
 pub struct AppState {
     pub server: Arc<Mutex<DshServer>>,
+    /// Whether the one-time "minimized to tray" notice has fired this run.
+    hide_notice_shown: AtomicBool,
 }
 
 // ── commands (called only from the local boot page) ─────────────────────────
@@ -123,8 +127,10 @@ fn handle_menu_action(app: &AppHandle, id: &str) {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
         .manage(AppState {
             server: Arc::new(Mutex::new(DshServer::default())),
+            hide_notice_shown: AtomicBool::new(false),
         })
         .invoke_handler(tauri::generate_handler![
             get_status,
@@ -164,10 +170,25 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
-            if let WindowEvent::CloseRequested { .. } = event {
-                // Ensure the dsh process tree is gone when the window closes.
-                let state = window.app_handle().state::<AppState>();
-                server::stop(&state.server);
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                // Tray-resident mode: closing the window hides it but leaves
+                // the dsh server running in the background. Only the
+                // menu/tray "退出" action (MENU_QUIT, app.exit) stops the
+                // server and actually exits the process.
+                api.prevent_close();
+                let _ = window.hide();
+
+                let app = window.app_handle();
+                let state = app.state::<AppState>();
+                if state.hide_notice_shown.swap(true, Ordering::Relaxed) {
+                    return;
+                }
+                let _ = app
+                    .notification()
+                    .builder()
+                    .title("DeepSeek Harness 已转入后台")
+                    .body("服务仍在运行；从系统托盘图标可重新打开窗口或退出。")
+                    .show();
             }
         })
         .on_menu_event(|app, event| handle_menu_action(app, event.id.as_ref()))
