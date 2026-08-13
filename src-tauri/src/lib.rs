@@ -17,6 +17,7 @@ use std::time::Duration;
 use tauri::{AppHandle, Manager, State, WindowEvent};
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
+use tauri_plugin_updater::UpdaterExt;
 
 use server::{DshServer, ServerStatus};
 
@@ -84,6 +85,44 @@ fn open_data_dir(app: AppHandle) -> Result<(), String> {
     app.opener().reveal_item_in_dir(&home).map_err(|e| e.to_string())
 }
 
+#[derive(serde::Serialize)]
+struct UpdateInfo {
+    version: String,
+    body: Option<String>,
+}
+
+/// Checks the configured updater endpoint for a newer shell release. Returns
+/// `None` if the current version is already the latest (or the check
+/// failed — network errors here shouldn't block the app from starting).
+#[tauri::command]
+async fn check_for_update(app: AppHandle) -> Option<UpdateInfo> {
+    let update = app.updater().ok()?.check().await.ok()??;
+    Some(UpdateInfo {
+        version: update.version,
+        body: update.body,
+    })
+}
+
+/// Re-checks for an update and, if one is still available, downloads,
+/// verifies (against the pinned pubkey) and installs it, then relaunches.
+/// Re-checking here (rather than trusting a version string round-tripped
+/// from `check_for_update`) avoids installing a stale/unverified `Update`.
+#[tauri::command]
+async fn install_update(app: AppHandle) -> Result<(), String> {
+    let update = app
+        .updater()
+        .map_err(|e| e.to_string())?
+        .check()
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "没有可用的更新".to_string())?;
+    update
+        .download_and_install(|_, _| {}, || {})
+        .await
+        .map_err(|e| e.to_string())?;
+    app.restart();
+}
+
 // ── menu / tray actions ──────────────────────────────────────────────────────
 
 fn handle_menu_action(app: &AppHandle, id: &str) {
@@ -128,6 +167,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AppState {
             server: Arc::new(Mutex::new(DshServer::default())),
             hide_notice_shown: AtomicBool::new(false),
@@ -140,7 +180,9 @@ pub fn run() {
             stop_server,
             get_log_tail,
             open_in_browser,
-            open_data_dir
+            open_data_dir,
+            check_for_update,
+            install_update
         ])
         .setup(|app| {
             let handle = app.handle().clone();
