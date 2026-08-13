@@ -1,0 +1,16 @@
+# Node
+node_modules/
+*.log
+
+# Rust / Tauri
+src-tauri/target/
+src-tauri/gen/schemas/
+
+# Generated runtime (downloaded dsh runtime / node.exe for bundling)
+src-tauri/resources/runtime/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
