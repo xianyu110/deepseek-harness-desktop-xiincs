@@ -69,7 +69,7 @@ fn get_log_tail(state: State<'_, AppState>, n: Option<usize>) -> Vec<String> {
 #[tauri::command]
 fn open_in_browser(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     let url = server::running_url(&state.server)
-        .unwrap_or_else(|| format!("http://127.0.0.1:{}", server::DEFAULT_PORT));
+        .unwrap_or_else(|| format!("http://127.0.0.1:{}", server::default_port()));
     app.opener().open_url(url, None::<&str>).map_err(|e| e.to_string())
 }
 
@@ -87,7 +87,7 @@ fn handle_menu_action(app: &AppHandle, id: &str) {
     match id {
         menu::MENU_OPEN_BROWSER => {
             let url = server::running_url(&state.server)
-                .unwrap_or_else(|| format!("http://127.0.0.1:{}", server::DEFAULT_PORT));
+                .unwrap_or_else(|| format!("http://127.0.0.1:{}", server::default_port()));
             let _ = app.opener().open_url(url, None::<&str>);
         }
         menu::MENU_RESTART => {
@@ -138,6 +138,11 @@ pub fn run() {
         ])
         .setup(|app| {
             let handle = app.handle().clone();
+
+            // Persistent log file for the desktop shell itself.
+            if let Ok(log_dir) = app.path().app_log_dir() {
+                server::init_log_file(log_dir.join("desktop.log"));
+            }
 
             // Remember the local boot page URL so we can navigate back to it
             // when the server stops unexpectedly.

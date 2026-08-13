@@ -17,8 +17,8 @@ use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
-use std::sync::{Arc, Mutex};
+use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -40,6 +40,26 @@ const AUTO_RESTART_MIN_GAP: Duration = Duration::from_secs(60);
 /// How long to watch for a quick EADDRINUSE exit after spawning on 3080.
 const EADDRINUSE_WATCH: Duration = Duration::from_secs(6);
 
+/// Optional persistent log file, set once via [`init_log_file`] at startup.
+static LOG_FILE: OnceLock<PathBuf> = OnceLock::new();
+
+/// Point the persistent log at a file (called once at app setup).
+pub fn init_log_file(path: PathBuf) {
+    if let Some(dir) = path.parent() {
+        let _ = fs::create_dir_all(dir);
+    }
+    let _ = LOG_FILE.set(path);
+}
+
+fn append_log_file(line: &str) {
+    if let Some(path) = LOG_FILE.get() {
+        use std::io::Write as _;
+        if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(path) {
+            let _ = writeln!(f, "{line}");
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "state", rename_all = "camelCase")]
 pub enum ServerStatus {
@@ -55,6 +75,7 @@ pub struct DshServer {
     pub logs: VecDeque<String>,
     pub boot_url: Option<String>,
     pid: Option<u32>,
+    install_pid: Option<u32>,
     requested_stop: bool,
     last_auto_restart: Option<Instant>,
     node: Option<String>,
@@ -68,6 +89,7 @@ impl Default for DshServer {
             logs: VecDeque::new(),
             boot_url: None,
             pid: None,
+            install_pid: None,
             requested_stop: false,
             last_auto_restart: None,
             node: None,
@@ -90,10 +112,12 @@ fn set_status(app: &AppHandle, server: &Shared, status: ServerStatus) {
 
 fn push_log(server: &Shared, line: String) {
     let mut s = server.lock().unwrap();
-    s.logs.push_back(line);
+    s.logs.push_back(line.clone());
     while s.logs.len() > LOG_CAP {
         s.logs.pop_front();
     }
+    drop(s);
+    append_log_file(&line);
 }
 
 pub fn log_tail(server: &Shared, n: usize) -> Vec<String> {
@@ -223,7 +247,7 @@ fn install_runtime(app: &AppHandle, server: &Shared, rd: &Path) -> Result<(), St
             detail: format!("安装 dsh 运行时 ({version})…"),
         },
     );
-    let output = Command::new("cmd")
+    let mut output = Command::new("cmd")
         .args([
             "/C",
             "npm",
@@ -235,13 +259,51 @@ fn install_runtime(app: &AppHandle, server: &Shared, rd: &Path) -> Result<(), St
             "--no-audit",
             "--no-fund",
             "--no-progress",
+            "--prefer-offline",
+            "--fetch-retries=5",
+            "--fetch-retry-mintimeout=2000",
         ])
-        .output()
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .map_err(|e| format!("无法运行 npm install: {e}"))?;
-    push_log(server, String::from_utf8_lossy(&output.stdout).into_owned());
-    push_log(server, String::from_utf8_lossy(&output.stderr).into_owned());
-    if !output.status.success() {
-        return Err(format!("npm install 失败（exit {:?}），请查看日志。", output.status.code()));
+
+    // Stream npm output into the log ring buffer so first-run installs
+    // (hundreds of MB) are visible instead of silent.
+    let install_pid = output.id();
+    {
+        let mut s = server.lock().unwrap();
+        s.install_pid = Some(install_pid);
+    }
+    let stdout = output.stdout.take().expect("stdout pipe");
+    let stderr = output.stderr.take().expect("stderr pipe");
+    let s1 = server.clone();
+    thread::spawn(move || {
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            push_log(&s1, line);
+        }
+    });
+    let s2 = server.clone();
+    thread::spawn(move || {
+        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+            push_log(&s2, line);
+        }
+    });
+    // Poll wait so `stop()` (which taskkills `install_pid`) is honoured even
+    // while the install is running.
+    let status = loop {
+        match output.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => thread::sleep(Duration::from_millis(300)),
+            Err(e) => return Err(format!("npm install 进程错误: {e}")),
+        }
+    };
+    {
+        let mut s = server.lock().unwrap();
+        s.install_pid = None;
+    }
+    if !status.success() {
+        return Err(format!("npm install 失败（exit {:?}），请查看日志。", status.code()));
     }
     Ok(())
 }
@@ -289,6 +351,7 @@ fn probe_dsh(url: &str) -> bool {
 }
 
 fn set_running(app: &AppHandle, server: &Shared, url: &str) {
+    println!("[dsh-desktop] server running at {url}");
     {
         let mut s = server.lock().unwrap();
         s.status = ServerStatus::Running {
@@ -306,7 +369,7 @@ fn set_running(app: &AppHandle, server: &Shared, url: &str) {
     }
 }
 
-fn navigate_boot(app: &AppHandle, server: &Shared) {
+pub fn navigate_boot(app: &AppHandle, server: &Shared) {
     let boot = server.lock().unwrap().boot_url.clone();
     if let Some(url) = boot {
         if let Some(win) = app.get_webview_window("main") {
@@ -334,6 +397,7 @@ fn spawn(app: &AppHandle, server: &Shared, node: &str, bin: &str, port: u16) -> 
     let mut child = cmd.spawn().map_err(|e| format!("启动 dsh 失败: {e}"))?;
 
     let pid = child.id();
+    println!("[dsh-desktop] spawned dsh pid {pid} on port {port}");
     {
         let mut s = server.lock().unwrap();
         s.pid = Some(pid);
@@ -397,7 +461,7 @@ fn spawn(app: &AppHandle, server: &Shared, node: &str, bin: &str, port: u16) -> 
         push_log(&srv4, format!("dsh 服务退出 (exit {code:?})"));
 
         let allow_restart = {
-            let mut s = srv4.lock().unwrap();
+            let s = srv4.lock().unwrap();
             match s.last_auto_restart {
                 Some(t) => t.elapsed() >= AUTO_RESTART_MIN_GAP,
                 None => true,
@@ -437,20 +501,37 @@ fn spawn(app: &AppHandle, server: &Shared, node: &str, bin: &str, port: u16) -> 
 
 /// Stop the server: mark requested, then kill the whole process tree.
 pub fn stop(server: &Shared) {
-    let pid = {
+    let (pid, install_pid) = {
         let mut s = server.lock().unwrap();
         s.requested_stop = true;
-        s.pid.take()
+        (s.pid.take(), s.install_pid.take())
     };
     if let Some(pid) = pid {
+        println!("[dsh-desktop] stopping dsh pid {pid} (process tree)");
+        let _ = Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .status();
+    }
+    if let Some(pid) = install_pid {
+        println!("[dsh-desktop] stopping runtime install pid {pid}");
         let _ = Command::new("taskkill")
             .args(["/PID", &pid.to_string(), "/T", "/F"])
             .status();
     }
 }
 
+/// The default bind port; `DSH_DESKTOP_PORT` overrides it (useful for
+/// running several desktop instances side by side for testing).
+pub fn default_port() -> u16 {
+    env_nonempty("DSH_DESKTOP_PORT")
+        .and_then(|p| p.parse::<u16>().ok())
+        .filter(|p| *p > 0)
+        .unwrap_or(DEFAULT_PORT)
+}
+
 /// Start (or attach to) the harness server. Never blocks for long: spawning
-/// and URL discovery happen on worker threads started inside.
+/// and URL discovery happen on worker threads started inside. Failures are
+/// surfaced as `ServerStatus::Error` so the boot page always shows a reason.
 pub fn start(app: &AppHandle, server: &Shared) -> Result<(), String> {
     {
         let s = server.lock().unwrap();
@@ -459,23 +540,34 @@ pub fn start(app: &AppHandle, server: &Shared) -> Result<(), String> {
         }
     }
 
-    let node = resolve_node(app)?;
-    let bin = resolve_bin(app, server)?;
-    push_log(server, format!("node: {node}"));
-    push_log(server, format!("bin:  {bin}"));
+    let result = start_inner(app, server);
+    if let Err(msg) = &result {
+        push_log(server, format!("启动失败: {msg}"));
+        set_status(app, server, ServerStatus::Error { message: msg.clone() });
+    }
+    result
+}
 
+fn start_inner(app: &AppHandle, server: &Shared) -> Result<(), String> {
     // Attach to an already-running harness on the default port instead of
-    // spawning a second instance (two servers would race on ~/.dsh).
-    let default_url = format!("http://127.0.0.1:{DEFAULT_PORT}");
+    // spawning a second instance (two servers would race on ~/.dsh). This
+    // happens before resolving node/runtime so attach mode needs nothing.
+    let port = default_port();
+    let default_url = format!("http://127.0.0.1:{port}");
     if probe_dsh(&default_url) {
         push_log(server, format!("检测到已在运行的 dsh 服务，直接使用 {default_url}"));
         set_running(app, server, &default_url);
         return Ok(());
     }
 
-    spawn(app, server, &node, &bin, DEFAULT_PORT)?;
+    let node = resolve_node(app)?;
+    let bin = resolve_bin(app, server)?;
+    push_log(server, format!("node: {node}"));
+    push_log(server, format!("bin:  {bin}"));
 
-    // If 3080 is taken by a non-dsh process, the child exits quickly with
+    spawn(app, server, &node, &bin, port)?;
+
+    // If the port is taken by a non-dsh process, the child exits quickly with
     // EADDRINUSE; fall back to an OS-assigned port (the URL line is parsed
     // from stdout by the reader thread).
     let deadline = Instant::now() + EADDRINUSE_WATCH;

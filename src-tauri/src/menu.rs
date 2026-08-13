@@ -6,7 +6,7 @@
 
 use tauri::menu::{Menu, MenuItem, Submenu};
 use tauri::tray::TrayIconBuilder;
-use tauri::{AppHandle, Manager, Wry};
+use tauri::{AppHandle, Wry};
 
 pub const MENU_OPEN_BROWSER: &str = "open_browser";
 pub const MENU_RESTART: &str = "restart";

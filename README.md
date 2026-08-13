@@ -45,8 +45,9 @@ so it is fast and offline after the first run.
 |---|---|
 | `DSH_DESKTOP_NODE` | Absolute path to `node.exe` to use instead of the one on `PATH` |
 | `DSH_DESKTOP_DSH_BIN` | Absolute path to a `dsh` `lib/bin.js` (e.g. a local checkout) |
-| `DSH_DESKTOP_RUNTIME_DIR` | Where the managed `@deepseek-ai/dsh` runtime is installed |
+| `DSH_DESKTOP_RUNTIME_DIR` | Where the managed `@deepseek-ai/dsh` runtime is installed (default: app cache dir); point it at an existing `node_modules` root to skip the first-run npm install |
 | `DSH_DESKTOP_DSH_VERSION` | npm version spec for the managed runtime (default `0.1.0-rc.6`) |
+| `DSH_DESKTOP_PORT` | Default bind port override (default `3080`); handy for running several instances |
 | `DSH_DESKTOP_CWD` | Working directory for the `dsh` server process (default: user home) |
 | `DSH_HOME` | Passed through to the server; harness data root (default `~/.dsh`) |
 
@@ -75,6 +76,7 @@ the shell — every shell action goes through the native menu/tray or the local 
 ## Roadmap
 
 - [x] Scaffold, server manager, menu/tray, crash recovery
+- [x] Persistent log file (`%LOCALAPPDATA%\dev.dsh.desktop\logs\desktop.log`) + live logs on the boot page
 - [ ] Bundled runtime: ship `node.exe` + the `dsh` node_modules inside the installer, so the app
       runs on machines without Node.js (`scripts/fetch-node.mjs`, `scripts/prepare-runtime.mjs`)
 - [ ] NSIS/MSI installers via `tauri build`

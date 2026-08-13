@@ -12,6 +12,8 @@ const els = {
   runningUrl: document.getElementById("running-url"),
   errorMessage: document.getElementById("error-message"),
   logBox: document.getElementById("log-box"),
+  logBoxStarting: document.getElementById("log-box-starting"),
+  btnLogsStarting: document.getElementById("btn-logs-starting"),
   btnRetry: document.getElementById("btn-retry"),
   btnRestart: document.getElementById("btn-restart"),
   btnLogs: document.getElementById("btn-logs"),
@@ -20,6 +22,7 @@ const els = {
 };
 
 let logsVisible = false;
+let logsStartingVisible = false;
 
 function show(id) {
   for (const key of ["starting", "running", "error"]) {
@@ -27,12 +30,12 @@ function show(id) {
   }
 }
 
-async function loadLogs() {
+async function loadLogsInto(box) {
   try {
     const lines = await invoke("get_log_tail", { n: 200 });
-    els.logBox.textContent = lines.join("\n");
+    box.textContent = lines.join("\n");
   } catch (err) {
-    els.logBox.textContent = `无法读取日志: ${err}`;
+    box.textContent = `无法读取日志: ${err}`;
   }
 }
 
@@ -40,7 +43,14 @@ function toggleLogs() {
   logsVisible = !logsVisible;
   els.logBox.classList.toggle("hidden", !logsVisible);
   els.btnLogs.textContent = logsVisible ? "隐藏日志" : "查看日志";
-  if (logsVisible) loadLogs();
+  if (logsVisible) loadLogsInto(els.logBox);
+}
+
+function toggleLogsStarting() {
+  logsStartingVisible = !logsStartingVisible;
+  els.logBoxStarting.classList.toggle("hidden", !logsStartingVisible);
+  els.btnLogsStarting.textContent = logsStartingVisible ? "隐藏日志" : "查看日志";
+  if (logsStartingVisible) loadLogsInto(els.logBoxStarting);
 }
 
 function render(status) {
@@ -113,6 +123,7 @@ async function init() {
       });
   });
   els.btnLogs.addEventListener("click", toggleLogs);
+  els.btnLogsStarting.addEventListener("click", toggleLogsStarting);
   els.btnOpenBrowser.addEventListener("click", () => invoke("open_in_browser"));
 
   await refresh();
