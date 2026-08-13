@@ -37,8 +37,11 @@ const LOG_CAP: usize = 400;
 const URL_PREFIX: &str = "dsh web: http://127.0.0.1:";
 /// Minimum gap between automatic restarts of a crashing server.
 const AUTO_RESTART_MIN_GAP: Duration = Duration::from_secs(60);
-/// How long to watch for a quick EADDRINUSE exit after spawning on 3080.
-const EADDRINUSE_WATCH: Duration = Duration::from_secs(6);
+/// How long to wait for the process to print its ready URL line before
+/// surfacing a stuck-start error. Generous: first-run installs and cold
+/// starts can be slow, but an upstream format change (see `URL_PREFIX`)
+/// would otherwise hang here forever with no feedback on the boot page.
+const READY_TIMEOUT: Duration = Duration::from_secs(45);
 
 /// Optional persistent log file, set once via [`init_log_file`] at startup.
 static LOG_FILE: OnceLock<PathBuf> = OnceLock::new();
@@ -584,8 +587,11 @@ fn start_inner(app: &AppHandle, server: &Shared) -> Result<(), String> {
 
     // If the port is taken by a non-dsh process, the child exits quickly with
     // EADDRINUSE; fall back to an OS-assigned port (the URL line is parsed
-    // from stdout by the reader thread).
-    let deadline = Instant::now() + EADDRINUSE_WATCH;
+    // from stdout by the reader thread). If the process stays alive but never
+    // prints its ready URL line — e.g. an upstream format change broke
+    // `URL_PREFIX` matching — surface an error instead of leaving the boot
+    // page stuck on "starting" forever.
+    let ready_deadline = Instant::now() + READY_TIMEOUT;
     loop {
         let (running, exited, eaddr) = {
             let s = server.lock().unwrap();
@@ -603,7 +609,24 @@ fn start_inner(app: &AppHandle, server: &Shared) -> Result<(), String> {
             spawn(app, server, &node, &bin, 0)?;
             return Ok(());
         }
-        if Instant::now() > deadline {
+        if exited {
+            // Exited for a reason other than EADDRINUSE: the exit-watcher
+            // thread from `spawn` already owns status/logs for this case
+            // (auto-restart or a surfaced error), nothing more to do here.
+            return Ok(());
+        }
+        if Instant::now() > ready_deadline {
+            push_log(
+                server,
+                "dsh 服务进程仍在运行，但超时未探测到就绪 URL（可能是 dsh 输出格式发生变化）。".to_string(),
+            );
+            set_status(
+                app,
+                server,
+                ServerStatus::Error {
+                    message: "启动超时：dsh 进程仍在运行，但未能确认服务已就绪，请查看日志。".to_string(),
+                },
+            );
             return Ok(());
         }
         thread::sleep(Duration::from_millis(200));
