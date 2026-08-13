@@ -95,6 +95,10 @@ DSH_RUNTIME_SOURCE=<node_modules root> npm run prepare:runtime  # copy a local r
 npm run build         # → src-tauri/target/release/bundle/nsis/DeepSeek Harness_0.1.0_x64-setup.exe
 ```
 
+Before cutting a release, run `npm run check:dsh-version` — upstream is in developer preview and
+publishes new RCs without notice; this checks the pinned `@deepseek-ai/dsh` default (duplicated in
+`src-tauri/src/server.rs` and `scripts/prepare-runtime.mjs`, they must agree) against npm's latest.
+
 ## License
 
 [MIT](./LICENSE)

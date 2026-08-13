@@ -10,6 +10,7 @@
     "bundle": "npm run fetch:node && npm run prepare:runtime && tauri build",
     "fetch:node": "node scripts/fetch-node.mjs",
     "prepare:runtime": "node scripts/prepare-runtime.mjs",
+    "check:dsh-version": "node scripts/check-dsh-version.mjs",
     "icon": "tauri icon"
   },
   "devDependencies": {
