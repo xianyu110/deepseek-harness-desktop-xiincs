@@ -2,7 +2,10 @@
 // src-tauri/resources/runtime/ so packaged builds can run without a system
 // Node.js. This is part of the "bundled runtime" milestone.
 //
-// Usage: node scripts/fetch-node.mjs [version]   (default: v22.14.0)
+// NOTE: the harness uses zstd APIs from `node:zlib` (added in Node 23+), so
+// the bundled runtime must be Node 24.x LTS or newer.
+//
+// Usage: node scripts/fetch-node.mjs [version]   (default: v24.9.0)
 
 import { execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, rmSync } from "node:fs";
@@ -14,7 +17,7 @@ const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const outDir = join(root, "src-tauri", "resources", "runtime");
 mkdirSync(outDir, { recursive: true });
 
-const version = process.argv[2] ?? "v22.14.0";
+const version = process.argv[2] ?? "v24.9.0";
 const base = `node-${version}-win-x64`;
 const zipUrl = `https://nodejs.org/dist/${version}/${base}.zip`;
 const zipPath = join(tmpdir(), `${base}.zip`);

@@ -142,6 +142,20 @@ fn env_nonempty(name: &str) -> Option<String> {
         .filter(|v| !v.is_empty())
 }
 
+/// Tauri's `PathResolver` returns verbatim (`\\?\C:\...`) paths on Windows.
+/// Node.js chokes on those for module resolution, so convert to the plain
+/// `C:\...` form before passing anything to a child process.
+fn plain_win_path(p: &Path) -> String {
+    let s = p.to_string_lossy();
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{rest}")
+    } else if let Some(rest) = s.strip_prefix(r"\\?\") {
+        rest.to_string()
+    } else {
+        s.into_owned()
+    }
+}
+
 fn resolve_home(app: &AppHandle) -> PathBuf {
     app.path().home_dir().unwrap_or_else(|_| PathBuf::from("."))
 }
@@ -186,7 +200,7 @@ fn runtime_bin_path(rd: &Path) -> PathBuf {
 fn resolve_node(app: &AppHandle) -> Result<String, String> {
     if let Some(node) = env_nonempty("DSH_DESKTOP_NODE") {
         if Path::new(&node).exists() {
-            return Ok(node);
+            return Ok(plain_win_path(Path::new(&node)));
         }
         return Err(format!("DSH_DESKTOP_NODE 指向的文件不存在: {node}"));
     }
@@ -194,7 +208,7 @@ fn resolve_node(app: &AppHandle) -> Result<String, String> {
     if let Ok(res) = app.path().resource_dir() {
         let bundled = res.join("runtime").join("node.exe");
         if bundled.exists() {
-            return Ok(bundled.to_string_lossy().into_owned());
+            return Ok(plain_win_path(&bundled));
         }
     }
     // system node from PATH
@@ -213,7 +227,7 @@ fn resolve_bin(app: &AppHandle, server: &Shared) -> Result<String, String> {
         let p = PathBuf::from(&bin);
         if p.exists() {
             push_log(server, format!("使用 DSH_DESKTOP_DSH_BIN: {bin}"));
-            return Ok(bin);
+            return Ok(plain_win_path(&p));
         }
         return Err(format!("DSH_DESKTOP_DSH_BIN 指向的文件不存在: {bin}"));
     }
@@ -221,7 +235,7 @@ fn resolve_bin(app: &AppHandle, server: &Shared) -> Result<String, String> {
     if let Ok(res) = app.path().resource_dir() {
         let bundled = runtime_bin_path(&res.join("runtime"));
         if bundled.exists() {
-            return Ok(bundled.to_string_lossy().into_owned());
+            return Ok(plain_win_path(&bundled));
         }
     }
     let rd = runtime_dir(app);
@@ -232,7 +246,7 @@ fn resolve_bin(app: &AppHandle, server: &Shared) -> Result<String, String> {
     if !bin.exists() {
         return Err(format!("dsh 运行时安装失败（{}），请查看日志。", rd.display()));
     }
-    Ok(bin.to_string_lossy().into_owned())
+    Ok(plain_win_path(&bin))
 }
 
 fn install_runtime(app: &AppHandle, server: &Shared, rd: &Path) -> Result<(), String> {
@@ -253,7 +267,7 @@ fn install_runtime(app: &AppHandle, server: &Shared, rd: &Path) -> Result<(), St
             "npm",
             "install",
             "--prefix",
-            rd.to_str().unwrap_or_default(),
+            &plain_win_path(rd),
             &target,
             "--omit=dev",
             "--no-audit",
@@ -383,16 +397,17 @@ fn spawn(app: &AppHandle, server: &Shared, node: &str, bin: &str, port: u16) -> 
     let cwd = env_nonempty("DSH_DESKTOP_CWD")
         .map(PathBuf::from)
         .unwrap_or_else(|| resolve_home(app));
+    let cwd_plain = plain_win_path(&cwd);
     fs::create_dir_all(&cwd).map_err(|e| format!("无法创建工作目录 {}: {e}", cwd.display()))?;
 
     push_log(
         server,
-        format!("启动: {node} {bin} web --port {port}  (cwd: {})", cwd.display()),
+        format!("启动: {node} {bin} web --port {port}  (cwd: {cwd_plain})"),
     );
 
     let mut cmd = Command::new(node);
     cmd.arg(bin).arg("web").arg("--port").arg(port.to_string());
-    cmd.current_dir(&cwd);
+    cmd.current_dir(&cwd_plain);
     cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = cmd.spawn().map_err(|e| format!("启动 dsh 失败: {e}"))?;
 
