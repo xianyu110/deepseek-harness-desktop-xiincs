@@ -77,9 +77,10 @@ the shell — every shell action goes through the native menu/tray or the local 
 
 - [x] Scaffold, server manager, menu/tray, crash recovery
 - [x] Persistent log file (`%LOCALAPPDATA%\dev.dsh.desktop\logs\desktop.log`) + live logs on the boot page
-- [x] Bundled runtime: `npm run bundle` ships `node.exe` (Node 24 — the harness needs the
-      `node:zlib` zstd APIs added in Node 23+) + the `dsh` node_modules inside the NSIS installer,
-      so the app runs on machines without Node.js
+- [x] Bundled runtime: `npm run bundle` ships `node.exe` (Node 24 — the harness's own
+      `engines.node` is `^22.19.0 || >=24.0.0`; Node 23 is intentionally excluded upstream as an
+      EOL/non-LTS line) + the `dsh` node_modules inside the NSIS installer, so the app runs on
+      machines without Node.js
 - [ ] Tray-resident mode (close to tray keeps the server running)
 - [ ] Auto-update (`tauri-plugin-updater`)
 

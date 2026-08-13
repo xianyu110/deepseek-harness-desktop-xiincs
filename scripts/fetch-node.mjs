@@ -2,8 +2,9 @@
 // src-tauri/resources/runtime/ so packaged builds can run without a system
 // Node.js. This is part of the "bundled runtime" milestone.
 //
-// NOTE: the harness uses zstd APIs from `node:zlib` (added in Node 23+), so
-// the bundled runtime must be Node 24.x LTS or newer.
+// NOTE: the harness's own `engines.node` is `^22.19.0 || >=24.0.0` (Node 23 is
+// intentionally excluded upstream — it's a non-LTS/EOL line, not a feature
+// floor). We bundle Node 24.x LTS here for headroom above the current floor.
 //
 // Usage: node scripts/fetch-node.mjs [version]   (default: v24.9.0)
 
