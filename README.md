@@ -86,7 +86,12 @@ the shell — every shell action goes through the native menu/tray or the local 
 - [x] Tray-resident mode: closing the window hides it and leaves the server running; a one-time
       notification explains this on first close each run. Only the menu/tray "退出" action stops
       the server and exits
-- [ ] Auto-update (`tauri-plugin-updater`)
+- [x] Auto-update (`tauri-plugin-updater`): the boot page checks on startup and shows a
+      dismissible banner; `.github/workflows/release.yml` builds, signs and drafts a GitHub
+      Release on every `v*` tag push (a human still publishes it — auto-update amplifies the
+      blast radius of a bad release, so nothing goes live unattended). See
+      [Two version axes](#two-version-axes) below for how this interacts with the bundled `dsh`
+      runtime version.
 - [ ] macOS build — partially started: `src-tauri/src/server.rs`'s process handling
       (`node.exe`/`taskkill`/`cmd /C npm`) is now behind a `platform` section with non-Windows
       branches, but those branches are **untested** (no Mac hardware/CI here), `tauri.conf.json`'s
@@ -109,6 +114,31 @@ npm run build         # → src-tauri/target/release/bundle/nsis/DeepSeek Harnes
 Before cutting a release, run `npm run check:dsh-version` — upstream is in developer preview and
 publishes new RCs without notice; this checks the pinned `@deepseek-ai/dsh` default (duplicated in
 `src-tauri/src/server.rs` and `scripts/prepare-runtime.mjs`, they must agree) against npm's latest.
+The release workflow runs this same check and fails the build on a mismatch.
+
+### Two version axes
+
+This app has two independent version numbers that must not be conflated:
+
+- **Shell version** (`tauri.conf.json`'s `version`, e.g. `0.1.0`) — the desktop wrapper itself.
+  `tauri-plugin-updater` only updates this.
+- **Runtime version** (`DSH_VERSION_DEFAULT` in `server.rs` / the default in
+  `prepare-runtime.mjs`, e.g. `0.1.0-rc.6`) — the pinned `@deepseek-ai/dsh` release bundled
+  inside the installer or installed on first use.
+
+**For a bundled-runtime install (the default, `npm run bundle`)** these travel together
+automatically: the NSIS installer's payload includes `resources/runtime/`, so a shell
+auto-update reinstalls the runtime pinned at build time along with it — there's no separate
+runtime-update mechanism to build as long as `DSH_VERSION_DEFAULT` is bumped (and
+`check:dsh-version` passes) before cutting each shell release.
+
+**For the managed (non-bundled) runtime path** — used when there's no `resources/runtime/`
+(e.g. an unpackaged dev build, or `DSH_DESKTOP_RUNTIME_DIR` pointed elsewhere) — the runtime is
+installed once via `npm install` on first use ([server.rs](src-tauri/src/server.rs)'s
+`install_runtime`) and **never re-checked afterward**. A user on this path who wants a newer
+`dsh` has to clear `DSH_DESKTOP_RUNTIME_DIR` (or set `DSH_DESKTOP_DSH_VERSION` to a newer spec)
+and let it reinstall. This is a known, narrow gap — not worth a bespoke updater for a path that's
+mainly used in development.
 
 ## License
 
