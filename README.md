@@ -77,11 +77,22 @@ the shell — every shell action goes through the native menu/tray or the local 
 
 - [x] Scaffold, server manager, menu/tray, crash recovery
 - [x] Persistent log file (`%LOCALAPPDATA%\dev.dsh.desktop\logs\desktop.log`) + live logs on the boot page
-- [ ] Bundled runtime: ship `node.exe` + the `dsh` node_modules inside the installer, so the app
-      runs on machines without Node.js (`scripts/fetch-node.mjs`, `scripts/prepare-runtime.mjs`)
-- [ ] NSIS/MSI installers via `tauri build`
+- [x] Bundled runtime: `npm run bundle` ships `node.exe` (Node 24 — the harness needs the
+      `node:zlib` zstd APIs added in Node 23+) + the `dsh` node_modules inside the NSIS installer,
+      so the app runs on machines without Node.js
 - [ ] Tray-resident mode (close to tray keeps the server running)
 - [ ] Auto-update (`tauri-plugin-updater`)
+
+## Building the installer
+
+```bash
+npm install
+npm run bundle        # fetch:node → prepare:runtime → tauri build
+# or step by step:
+npm run fetch:node    # downloads node.exe → src-tauri/resources/runtime
+DSH_RUNTIME_SOURCE=<node_modules root> npm run prepare:runtime  # copy a local runtime instead of npm install
+npm run build         # → src-tauri/target/release/bundle/nsis/DeepSeek Harness_0.1.0_x64-setup.exe
+```
 
 ## License
 
