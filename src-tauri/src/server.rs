@@ -22,6 +22,9 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
+
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -198,6 +201,72 @@ fn runtime_bin_path(rd: &Path) -> PathBuf {
         .join("bin.js")
 }
 
+// ── platform ─────────────────────────────────────────────────────────────────
+//
+// This file is Windows-only in practice today (the only shipped target is
+// NSIS), but the OS-specific bits are isolated here so a future macOS/Linux
+// target only needs to extend this section, not chase call sites.
+//
+// NOTE: the non-Windows branches below are untested — there is no macOS/Linux
+// CI or bundled runtime yet. They exist so the crate stays platform-generic;
+// treat them as a starting point, not a verified port.
+
+/// The bundled/managed Node executable's filename for this OS.
+fn node_binary_name() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "node.exe"
+    } else {
+        "node"
+    }
+}
+
+/// A `npm install …` command that works from a non-interactive spawn context.
+/// On Windows, `npm` is a `.cmd` shim that `Command::new("npm")` can't
+/// execute directly without going through `cmd /C`; other platforms invoke
+/// the `npm` binary directly.
+fn npm_install_command(args: &[&str]) -> Command {
+    if cfg!(target_os = "windows") {
+        let mut cmd = Command::new("cmd");
+        cmd.arg("/C").arg("npm").args(args);
+        cmd
+    } else {
+        let mut cmd = Command::new("npm");
+        cmd.args(args);
+        cmd
+    }
+}
+
+/// Make `cmd`'s child its own process-group leader (Unix only, no-op call
+/// site on Windows). Pairs with [`kill_process_tree`]: killing the negated
+/// pid (the group) reaches every descendant without a manual tree walk.
+/// Every spawn site that `kill_process_tree` may later target must call this.
+#[cfg(unix)]
+fn own_process_group(cmd: &mut Command) {
+    cmd.process_group(0);
+}
+#[cfg(not(unix))]
+fn own_process_group(_cmd: &mut Command) {}
+
+/// Kill a process and its full descendant tree. Windows uses `taskkill /T
+/// /F`, which walks the tree via the OS's own parent-process tracking and
+/// kills unconditionally. Other platforms kill the process group instead —
+/// see [`own_process_group`], which every spawn site `kill_process_tree` may
+/// target must call — but send `SIGTERM`, not `SIGKILL`: a well-behaved
+/// child can catch and delay on it, unlike the Windows `/F` path. If that
+/// turns out to matter in practice (e.g. a slow shutdown on stop/restart), a
+/// short grace period followed by `SIGKILL` on the same group is the fix.
+fn kill_process_tree(pid: u32) {
+    if cfg!(target_os = "windows") {
+        let _ = Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .status();
+    } else {
+        let _ = Command::new("kill")
+            .args(["-TERM", &format!("-{pid}")])
+            .status();
+    }
+}
+
 // ── resolution ───────────────────────────────────────────────────────────────
 
 fn resolve_node(app: &AppHandle) -> Result<String, String> {
@@ -209,7 +278,7 @@ fn resolve_node(app: &AppHandle) -> Result<String, String> {
     }
     // bundled runtime shipped with packaged builds
     if let Ok(res) = app.path().resource_dir() {
-        let bundled = res.join("runtime").join("node.exe");
+        let bundled = res.join("runtime").join(node_binary_name());
         if bundled.exists() {
             return Ok(plain_win_path(&bundled));
         }
@@ -264,22 +333,22 @@ fn install_runtime(app: &AppHandle, server: &Shared, rd: &Path) -> Result<(), St
             detail: format!("安装 dsh 运行时 ({version})…"),
         },
     );
-    let mut output = Command::new("cmd")
-        .args([
-            "/C",
-            "npm",
-            "install",
-            "--prefix",
-            &plain_win_path(rd),
-            &target,
-            "--omit=dev",
-            "--no-audit",
-            "--no-fund",
-            "--no-progress",
-            "--prefer-offline",
-            "--fetch-retries=5",
-            "--fetch-retry-mintimeout=2000",
-        ])
+    let prefix = plain_win_path(rd);
+    let mut cmd = npm_install_command(&[
+        "install",
+        "--prefix",
+        &prefix,
+        &target,
+        "--omit=dev",
+        "--no-audit",
+        "--no-fund",
+        "--no-progress",
+        "--prefer-offline",
+        "--fetch-retries=5",
+        "--fetch-retry-mintimeout=2000",
+    ]);
+    own_process_group(&mut cmd);
+    let mut output = cmd
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -412,6 +481,7 @@ fn spawn(app: &AppHandle, server: &Shared, node: &str, bin: &str, port: u16) -> 
     cmd.arg(bin).arg("web").arg("--port").arg(port.to_string());
     cmd.current_dir(&cwd_plain);
     cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    own_process_group(&mut cmd);
     let mut child = cmd.spawn().map_err(|e| format!("启动 dsh 失败: {e}"))?;
 
     let pid = child.id();
@@ -526,15 +596,11 @@ pub fn stop(server: &Shared) {
     };
     if let Some(pid) = pid {
         println!("[dsh-desktop] stopping dsh pid {pid} (process tree)");
-        let _ = Command::new("taskkill")
-            .args(["/PID", &pid.to_string(), "/T", "/F"])
-            .status();
+        kill_process_tree(pid);
     }
     if let Some(pid) = install_pid {
         println!("[dsh-desktop] stopping runtime install pid {pid}");
-        let _ = Command::new("taskkill")
-            .args(["/PID", &pid.to_string(), "/T", "/F"])
-            .status();
+        kill_process_tree(pid);
     }
 }
 
