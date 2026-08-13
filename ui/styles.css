@@ -160,3 +160,33 @@ button:disabled {
   font-size: 11px;
   user-select: text;
 }
+
+/* update banner */
+.update-banner {
+  margin-top: 18px;
+  padding: 12px 16px;
+  background: rgba(77, 171, 247, 0.1);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.update-banner span {
+  font-size: 13px;
+  text-align: left;
+}
+
+.update-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.update-actions button {
+  padding: 6px 12px;
+  font-size: 12px;
+}

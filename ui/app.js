@@ -19,6 +19,10 @@ const els = {
   btnLogs: document.getElementById("btn-logs"),
   btnOpenBrowser: document.getElementById("btn-open-browser"),
   footer: document.getElementById("footer"),
+  updateBanner: document.getElementById("update-banner"),
+  updateText: document.getElementById("update-text"),
+  btnUpdateInstall: document.getElementById("btn-update-install"),
+  btnUpdateDismiss: document.getElementById("btn-update-dismiss"),
 };
 
 let logsVisible = false;
@@ -126,7 +130,36 @@ async function init() {
   els.btnLogsStarting.addEventListener("click", toggleLogsStarting);
   els.btnOpenBrowser.addEventListener("click", () => invoke("open_in_browser"));
 
+  els.btnUpdateDismiss.addEventListener("click", () => {
+    els.updateBanner.classList.add("hidden");
+  });
+  els.btnUpdateInstall.addEventListener("click", () => {
+    els.btnUpdateInstall.disabled = true;
+    els.btnUpdateInstall.textContent = "正在更新…";
+    els.btnUpdateDismiss.disabled = true;
+    // On success this relaunches the app (the window disappears); a caught
+    // error means the update didn't apply, so restore the button for retry.
+    invoke("install_update").catch((err) => {
+      els.btnUpdateInstall.disabled = false;
+      els.btnUpdateInstall.textContent = "立即更新";
+      els.btnUpdateDismiss.disabled = false;
+      els.updateText.textContent = `更新失败: ${err}`;
+    });
+  });
+  checkForUpdate();
+
   await refresh();
+}
+
+async function checkForUpdate() {
+  try {
+    const update = await invoke("check_for_update");
+    if (!update) return;
+    els.updateText.textContent = `发现新版本 ${update.version}`;
+    els.updateBanner.classList.remove("hidden");
+  } catch {
+    /* update check is best-effort; silent failure keeps the boot page usable offline */
+  }
 }
 
 init();
