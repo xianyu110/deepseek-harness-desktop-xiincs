@@ -83,6 +83,13 @@ the shell — every shell action goes through the native menu/tray or the local 
       machines without Node.js
 - [ ] Tray-resident mode (close to tray keeps the server running)
 - [ ] Auto-update (`tauri-plugin-updater`)
+- [ ] macOS build — partially started: `src-tauri/src/server.rs`'s process handling
+      (`node.exe`/`taskkill`/`cmd /C npm`) is now behind a `platform` section with non-Windows
+      branches, but those branches are **untested** (no Mac hardware/CI here), `tauri.conf.json`'s
+      `bundle.targets` is still Windows-only (`["nsis"]`, needs a `dmg`/`app` config for macOS —
+      not added yet since it couldn't be verified), and `scripts/fetch-node.mjs` still only
+      downloads the Windows Node binary. Whoever picks this up on real macOS hardware: start by
+      running `npm run tauri dev` unpackaged to shake out `server.rs`'s Unix branches first
 
 ## Building the installer
 
