@@ -5,28 +5,54 @@
 //
 // Usage: node scripts/prepare-runtime.mjs
 // Env:   DSH_DESKTOP_DSH_VERSION  npm version spec (default 0.1.0-rc.6)
+//        DSH_RUNTIME_SOURCE       directory containing node_modules/@deepseek-ai/dsh
+//                                 (e.g. an existing npx cache root) — copies it
+//                                 locally instead of hitting the npm registry.
 
 import { execFileSync } from "node:child_process";
+import { cpSync, existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const runtimeDir = join(root, "src-tauri", "resources", "runtime");
 const version = process.env.DSH_DESKTOP_DSH_VERSION ?? "0.1.0-rc.6";
+mkdirSync(runtimeDir, { recursive: true });
 
-console.log(`Installing @deepseek-ai/dsh@${version} → ${runtimeDir}`);
-execFileSync(
-  "npm",
-  [
-    "install",
-    "--prefix",
-    runtimeDir,
-    `@deepseek-ai/dsh@${version}`,
-    "--omit=dev",
-    "--no-audit",
-    "--no-fund",
-    "--no-progress",
-  ],
-  { stdio: "inherit" },
-);
-console.log("Runtime ready. Add the runtime dir to tauri.conf.json bundle.resources to ship it.");
+const source = process.env.DSH_RUNTIME_SOURCE;
+const sourceBin = source
+  ? join(source, "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js")
+  : null;
+if (sourceBin && existsSync(sourceBin)) {
+  console.log(`Copying runtime from DSH_RUNTIME_SOURCE: ${source}`);
+  cpSync(join(source, "node_modules"), join(runtimeDir, "node_modules"), {
+    recursive: true,
+    force: true,
+  });
+} else {
+  console.log(`Installing @deepseek-ai/dsh@${version} → ${runtimeDir}`);
+  execFileSync(
+    "npm",
+    [
+      "install",
+      "--prefix",
+      runtimeDir,
+      `@deepseek-ai/dsh@${version}`,
+      "--omit=dev",
+      "--no-audit",
+      "--no-fund",
+      "--no-progress",
+      "--prefer-offline",
+      "--fetch-retries=5",
+      "--fetch-retry-mintimeout=2000",
+    ],
+    { stdio: "inherit" },
+  );
+}
+
+const bin = join(runtimeDir, "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js");
+if (!existsSync(bin)) {
+  console.error("Runtime install failed: dsh bin.js not found");
+  process.exit(1);
+}
+console.log("Runtime ready. Run `npm run fetch:node` too, then `npm run build`.");

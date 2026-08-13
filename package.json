@@ -7,9 +7,10 @@
     "tauri": "tauri",
     "dev": "tauri dev",
     "build": "tauri build",
-    "icon": "tauri icon",
+    "bundle": "npm run fetch:node && npm run prepare:runtime && tauri build",
     "fetch:node": "node scripts/fetch-node.mjs",
-    "prepare:runtime": "node scripts/prepare-runtime.mjs"
+    "prepare:runtime": "node scripts/prepare-runtime.mjs",
+    "icon": "tauri icon"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2"
