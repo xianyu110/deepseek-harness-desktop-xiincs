@@ -214,10 +214,15 @@ DeepSeek Harness_0.3.0_amd64.deb"）。加了 `continue-on-error: true` 让专�
 安装包文件"。这是这个项目历史上第一次证明"macOS/Linux 打包在技术上是可行的"，剩下的不再是未知数，
 是纯粹的资源/流程缺口。
 
+**新增（第五轮，已接入发布流程）**：跟用户确认过"未签名发布 macOS/Linux"这个产品取舍（推荐选项）
+后，[release.yml](.github/workflows/release.yml) 加了 `macos-release`/`linux-release` 两个
+`needs: release` 的新 job，在 Windows job 建好 draft release 之后用 `gh release upload` 把
+`.dmg`/`.deb` 附加上去——不碰 Windows job 的任何逻辑，不碰 `tauri.conf.json` 的共享
+`targets`，不写入 `latest.json`/不参与自动更新（那套机制要验证真实签名，macOS 这边没有
+Apple Developer 账号产不出）。**这一步还没有被真实的 `v*` tag 触发验证过**——`release.yml`
+只在打 tag 时跑，push 到 main 不会触发，需要下次正式发版时才会第一次真正跑起来。
+
 **仍未做（真正的硬约束，不是没验证）**：
-- 把这条打包路径接进 [tauri.conf.json](src-tauri/tauri.conf.json) 的共享 `targets: ["nsis"]`
-  列表或 `release.yml` 本身，让它成为真正的发布产物（而不只是 CI 里的一次性验证）：这一步要么改
-  共享配置文件、要么改 `release.yml`，出错的代价是可能连累现在工作正常的 Windows 发布流程，
   值得单独更谨慎地对待，不该用前四轮"加一个独立 job"那种节奏推进。
 - 代码签名与公证：需要 Apple Developer 账号，没有，且这不是能靠 CI 绕过的技术问题，是纯粹的
   资源/credential 缺口。
