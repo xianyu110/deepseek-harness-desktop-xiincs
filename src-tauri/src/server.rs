@@ -23,7 +23,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 #[cfg(unix)]
-use std::os::unix::process::CommandExt;
+use std::os::unix::process::CommandExt as _;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt as _;
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
@@ -228,6 +230,7 @@ fn npm_install_command(args: &[&str]) -> Command {
     if cfg!(target_os = "windows") {
         let mut cmd = Command::new("cmd");
         cmd.arg("/C").arg("npm").args(args);
+        hide_console(&mut cmd);
         cmd
     } else {
         let mut cmd = Command::new("npm");
@@ -247,6 +250,22 @@ fn own_process_group(cmd: &mut Command) {
 #[cfg(not(unix))]
 fn own_process_group(_cmd: &mut Command) {}
 
+/// Windows' CREATE_NO_WINDOW flag (winbase.h) — kept as a raw constant rather
+/// than pulling in the `windows` crate for one value. `node.exe`, `cmd.exe`
+/// and `npm.cmd` are all console-subsystem binaries: spawned from this app's
+/// GUI-subsystem process (see `#![windows_subsystem = "windows"]` in
+/// main.rs, release builds only) they'd otherwise each pop their own new
+/// console window. No-op on other platforms, which have no such concept.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+#[cfg(windows)]
+fn hide_console(cmd: &mut Command) {
+    cmd.creation_flags(CREATE_NO_WINDOW);
+}
+#[cfg(not(windows))]
+fn hide_console(_cmd: &mut Command) {}
+
 /// Kill a process and its full descendant tree. Windows uses `taskkill /T
 /// /F`, which walks the tree via the OS's own parent-process tracking and
 /// kills unconditionally. Other platforms kill the process group instead —
@@ -257,9 +276,10 @@ fn own_process_group(_cmd: &mut Command) {}
 /// short grace period followed by `SIGKILL` on the same group is the fix.
 fn kill_process_tree(pid: u32) {
     if cfg!(target_os = "windows") {
-        let _ = Command::new("taskkill")
-            .args(["/PID", &pid.to_string(), "/T", "/F"])
-            .status();
+        let mut cmd = Command::new("taskkill");
+        cmd.args(["/PID", &pid.to_string(), "/T", "/F"]);
+        hide_console(&mut cmd);
+        let _ = cmd.status();
     } else {
         let _ = Command::new("kill")
             .args(["-TERM", &format!("-{pid}")])
@@ -284,7 +304,10 @@ fn resolve_node(app: &AppHandle) -> Result<String, String> {
         }
     }
     // system node from PATH
-    match Command::new("node").arg("--version").output() {
+    let mut probe = Command::new("node");
+    probe.arg("--version");
+    hide_console(&mut probe);
+    match probe.output() {
         Ok(out) if out.status.success() => Ok("node".to_string()),
         _ => Err(
             "未检测到 Node.js：请安装 Node.js（https://nodejs.org），\
@@ -482,6 +505,7 @@ fn spawn(app: &AppHandle, server: &Shared, node: &str, bin: &str, port: u16) -> 
     cmd.current_dir(&cwd_plain);
     cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     own_process_group(&mut cmd);
+    hide_console(&mut cmd);
     let mut child = cmd.spawn().map_err(|e| format!("启动 dsh 失败: {e}"))?;
 
     let pid = child.id();
