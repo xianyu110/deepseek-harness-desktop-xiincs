@@ -40,3 +40,20 @@ jobs:
           releaseDraft: true
           prerelease: false
           updaterJsonPreferNsis: true
+
+      # tauri-action's own latest.json generation breaks when productName
+      # contains a space (tauri-apps/tauri-action#345, #843, #860 — long
+      # open, unresolved) — it logs "Signature not found for the updater
+      # JSON. Skipping upload..." and silently omits it. The .sig files it
+      # produces are correct; build latest.json from those directly instead
+      # of renaming productName (which would break the installed-directory
+      # continuity for existing installs).
+      - name: Build latest.json (tauri-action's own generation is broken for productName with spaces)
+        run: |
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          node scripts/build-latest-json.mjs $version "${{ github.ref_name }}"
+
+      - name: Upload latest.json to the release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ github.ref_name }}" latest.json --clobber --repo ${{ github.repository }}
