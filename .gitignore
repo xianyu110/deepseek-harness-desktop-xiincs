@@ -9,6 +9,9 @@ src-tauri/gen/schemas/
 # Generated runtime (downloaded dsh runtime / node.exe for bundling)
 src-tauri/resources/runtime/
 
+# Generated per-release by scripts/build-latest-json.mjs
+/latest.json
+
 # OS / editor
 .DS_Store
 Thumbs.db
