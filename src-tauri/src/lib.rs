@@ -133,6 +133,36 @@ fn show_main_window(app: &AppHandle) {
     }
 }
 
+/// Disables WebView2's built-in right-click context menu (Back / Forward /
+/// Reload / Inspect / …). The harness page is a plain remote page with no
+/// Tauri-side navigation UI of its own, so that default menu was the only
+/// way a user could reach browser-style back/forward — and "back" lands on
+/// the local boot page with no way back to the harness UI short of a
+/// restart (there is no in-app forward affordance, and the boot page's own
+/// readiness check does not re-run on a history navigation). Removing the
+/// menu removes the discoverable path into that dead end. `Settings` lives
+/// on the `CoreWebView2` instance, not the page, so this only needs to run
+/// once — it stays in effect across every later `navigate()` call (both to
+/// the harness URL and back to the boot page on stop/restart).
+#[cfg(windows)]
+fn disable_context_menu(win: &tauri::WebviewWindow) {
+    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Controller;
+    let _ = win.with_webview(|webview| {
+        let controller: ICoreWebView2Controller = webview.controller();
+        let result: windows::core::Result<()> = (|| unsafe {
+            let core = controller.CoreWebView2()?;
+            let settings = core.Settings()?;
+            settings.SetAreDefaultContextMenusEnabled(false)?;
+            Ok(())
+        })();
+        if let Err(e) = result {
+            eprintln!("[dsh-desktop] failed to disable WebView2 context menu: {e}");
+        }
+    });
+}
+#[cfg(not(windows))]
+fn disable_context_menu(_win: &tauri::WebviewWindow) {}
+
 // ── menu / tray actions ──────────────────────────────────────────────────────
 
 fn handle_menu_action(app: &AppHandle, id: &str) {
@@ -209,6 +239,7 @@ pub fn run() {
                 if let Ok(url) = win.url() {
                     app.state::<AppState>().server.lock().unwrap().boot_url = Some(url.to_string());
                 }
+                disable_context_menu(&win);
             }
 
             app.set_menu(menu::build_menu(&handle)?)?;
