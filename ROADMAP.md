@@ -187,14 +187,25 @@ CI 里没跑那两步），修成先建一个空占位目录满足存在性检�
 （[run](https://github.com/xiincs/deepseek-harness-desktop/actions/runs/31794303728)）——这是这两个
 分支写下来之后第一次被真正执行过。
 
-**仍未做**：这只是 `cargo check` + 单独的 `fetch-node.mjs` 验证，不是 `tauri build`——真正的打包
-还需要 `prepare-runtime.mjs` 的 npm install 部分在 macOS/Linux 上实测（理论上跨平台通用，但和
-`fetch-node.mjs` 一样"理论上"这个词在这个项目里已经不可信了，下一步应该测这个）、`bundle.targets`
-加 `dmg`/`app`（已查证 Tauri 对不属于
-当前平台的 target 是直接报错、不是静默跳过，所以不能简单把这些加进
-[tauri.conf.json](src-tauri/tauri.conf.json) 现有的单一 `targets: ["nsis"]` 列表里，必须用
-`--bundles` 参数按平台单独传，或改成 `"all"` 让 CLI 自动按 host 过滤——这两条路都没verify过，
-风险高于新增一个只读的 check job，这次没做）、代码签名与公证（需要 Apple Developer 账号，没有）。
+**新增（第三轮）**：加了 `prepare-runtime` CI job，在 macOS/Linux 上真实跑了
+`node scripts/prepare-runtime.mjs`（`npm install --prefix ... @deepseek-ai/dsh@0.1.0-rc.6`），
+再用刚 fetch 到的真实 node 二进制跑 `bin.js --help` 冒烟测试。日志里能看到真实的
+"added 529 packages in 2m" 和真实的 `Usage: dsh [options] [command] [args...]` 输出，两个平台
+都通过（[run](https://github.com/xiincs/deepseek-harness-desktop/actions/runs/31794639808)）。
+
+**结论**：`fetch-node.mjs` + `prepare-runtime.mjs` 这条组装完整 `resources/runtime` 的链路，
+在 macOS 和 Linux 上都有真实证据证明能跑通——这是这个项目历史上第一次验证过"能不能在这两个平台
+上产出一份可用的打包运行时"这个最核心的技术未知数，不再是纯粹的"理论上跨平台"。
+
+**仍未做（真正的硬约束，不是没验证）**：
+- `bundle.targets` 加 `dmg`/`app`/`appimage`/`deb`：已查证 Tauri 对不属于当前平台的 target 是
+  直接报错、不是静默跳过，不能简单把这些塞进 [tauri.conf.json](src-tauri/tauri.conf.json) 现有的
+  单一 `targets: ["nsis"]` 列表——必须用 `--bundles` 参数按平台单独传，或改成 `"all"` 让 CLI
+  自动按 host 过滤。这两条路都还没验证过，但风险模型跟前三轮不一样：前三轮加的都是新的、独立的
+  CI job，出错只是新 job 失败；这一步要么改共享配置文件、要么改 `release.yml` 本身，出错的代价是
+  可能连累现在工作正常的 Windows 发布流程，值得单独更谨慎地对待，不该用同样的节奏推进。
+- 代码签名与公证：需要 Apple Developer 账号，没有，且这不是能靠 CI 绕过的技术问题，是纯粹的
+  资源/credential 缺口。
 
 **现状（旧）**：[tauri.conf.json](src-tauri/tauri.conf.json) 和 `resources/runtime` 都是
 Windows-only，`server.rs` 里非 Windows 分支存在但从未跑过（见文件头注释 "non-Windows branches
