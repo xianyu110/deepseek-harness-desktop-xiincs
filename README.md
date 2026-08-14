@@ -117,7 +117,7 @@ npm run bundle        # fetch:node → prepare:runtime → tauri build
 # 或者分步执行：
 npm run fetch:node    # 下载 node.exe → src-tauri/resources/runtime
 DSH_RUNTIME_SOURCE=<node_modules 根目录> npm run prepare:runtime  # 用本地运行时代替 npm install
-npm run build         # → src-tauri/target/release/bundle/nsis/DeepSeek Harness_0.2.0_x64-setup.exe
+npm run build         # → src-tauri/target/release/bundle/nsis/DeepSeek Harness_0.3.0_x64-setup.exe
 ```
 
 正式发布前先跑一下 `npm run check:dsh-version`——上游还在开发者预览阶段，会毫无预警地发布新的 RC；
@@ -129,7 +129,7 @@ workflow 也会跑同一个检查，版本号对不上会直接让构建失败�
 
 这个应用有两个互相独立、不能混为一谈的版本号：
 
-- **外壳版本**（`tauri.conf.json` 里的 `version`，比如 `0.2.0`）——桌面外壳本身的版本。
+- **外壳版本**（`tauri.conf.json` 里的 `version`，比如 `0.3.0`）——桌面外壳本身的版本。
   `tauri-plugin-updater` 只会更新这一个。
 - **运行时版本**（`server.rs` 里的 `DSH_VERSION_DEFAULT` / `prepare-runtime.mjs` 里的默认值，比如
   `0.1.0-rc.6`）——打进安装包或首次运行时安装的那个 `@deepseek-ai/dsh` 版本。

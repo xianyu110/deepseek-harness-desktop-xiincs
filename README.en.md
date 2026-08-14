@@ -126,7 +126,7 @@ npm run bundle        # fetch:node → prepare:runtime → tauri build
 # or step by step:
 npm run fetch:node    # downloads node.exe → src-tauri/resources/runtime
 DSH_RUNTIME_SOURCE=<node_modules root> npm run prepare:runtime  # copy a local runtime instead of npm install
-npm run build         # → src-tauri/target/release/bundle/nsis/DeepSeek Harness_0.2.0_x64-setup.exe
+npm run build         # → src-tauri/target/release/bundle/nsis/DeepSeek Harness_0.3.0_x64-setup.exe
 ```
 
 Before cutting a release, run `npm run check:dsh-version` — upstream is in developer preview and
@@ -138,7 +138,7 @@ The release workflow runs this same check and fails the build on a mismatch.
 
 This app has two independent version numbers that must not be conflated:
 
-- **Shell version** (`tauri.conf.json`'s `version`, e.g. `0.2.0`) — the desktop wrapper itself.
+- **Shell version** (`tauri.conf.json`'s `version`, e.g. `0.3.0`) — the desktop wrapper itself.
   `tauri-plugin-updater` only updates this.
 - **Runtime version** (`DSH_VERSION_DEFAULT` in `server.rs` / the default in
   `prepare-runtime.mjs`, e.g. `0.1.0-rc.6`) — the pinned `@deepseek-ai/dsh` release bundled
