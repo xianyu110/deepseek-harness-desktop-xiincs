@@ -4,8 +4,10 @@
 //! actions can reach the shared app state; `build_tray` takes the handler as a
 //! callback to avoid a circular dependency.
 
+use std::sync::Arc;
+
 use tauri::menu::{Menu, MenuItem, Submenu};
-use tauri::tray::TrayIconBuilder;
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Wry};
 
 pub const MENU_OPEN_BROWSER: &str = "open_browser";
@@ -33,11 +35,29 @@ pub fn build_tray(
     let quit = MenuItem::with_id(app, MENU_QUIT, "退出", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&show, &open_browser, &restart, &quit])?;
 
+    // Shared between on_menu_event and on_tray_icon_event below (a left
+    // click routes through the same MENU_SHOW_WINDOW id/handler as the
+    // "显示窗口" item, so both paths stay in sync by construction).
+    let on_action = Arc::new(on_action);
+    let on_action_click = on_action.clone();
+
     let mut builder = TrayIconBuilder::with_id("main-tray")
         .tooltip("DeepSeek Harness")
         .menu(&menu)
-        .show_menu_on_left_click(true)
-        .on_menu_event(move |app, event| on_action(app, event.id.as_ref()));
+        // Left click shows the window directly; only right click opens this
+        // menu (the platform default once this is off).
+        .show_menu_on_left_click(false)
+        .on_menu_event(move |app, event| on_action(app, event.id.as_ref()))
+        .on_tray_icon_event(move |tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                on_action_click(tray.app_handle(), MENU_SHOW_WINDOW);
+            }
+        });
     if let Some(icon) = app.default_window_icon().cloned() {
         builder = builder.icon(icon);
     }
