@@ -197,13 +197,28 @@ CI 里没跑那两步），修成先建一个空占位目录满足存在性检�
 在 macOS 和 Linux 上都有真实证据证明能跑通——这是这个项目历史上第一次验证过"能不能在这两个平台
 上产出一份可用的打包运行时"这个最核心的技术未知数，不再是纯粹的"理论上跨平台"。
 
+**新增（第四轮，完整链路验证）**：加了 `bundle-smoke-test` job，用 `--bundles <fmt>` 这个
+per-invocation CLI 参数（不是改 `tauri.conf.json` 的共享 `targets` 列表）在 macOS 上真跑
+`tauri build --bundles dmg`、Linux 上真跑 `tauri build --bundles deb`。第一次跑暴露了一个真实
+但良性的问题：`tauri.conf.json` 配了 updater pubkey，deb 打包成功后会额外尝试产出签名的 updater
+产物，没给 `TAURI_SIGNING_PRIVATE_KEY`（这个 job 本来就不该有这个 secret）导致这一步报错、把整个
+命令的退出码带成非零——但此时 `.deb` 本身已经真实落盘了（日志："Finished 1 bundle at: ...
+DeepSeek Harness_0.3.0_amd64.deb"）。加了 `continue-on-error: true` 让专门的产物存在性检查
+成为真正的判定标准后，两个平台都绿灯：
+[最终 run](https://github.com/xiincs/deepseek-harness-desktop/actions/runs/31796177602)
+里能看到真实产出的 `DeepSeek Harness_0.3.0_aarch64.dmg`（102MB）和
+`DeepSeek Harness_0.3.0_amd64.deb`。
+
+**结论**：`fetch-node.mjs` → `prepare-runtime.mjs` → `tauri build --bundles` 这条完整链路，
+在 macOS 和 Linux 上都有端到端的真实证据——不只是"运行时能装起来"，是"能产出真实的、体积正常的
+安装包文件"。这是这个项目历史上第一次证明"macOS/Linux 打包在技术上是可行的"，剩下的不再是未知数，
+是纯粹的资源/流程缺口。
+
 **仍未做（真正的硬约束，不是没验证）**：
-- `bundle.targets` 加 `dmg`/`app`/`appimage`/`deb`：已查证 Tauri 对不属于当前平台的 target 是
-  直接报错、不是静默跳过，不能简单把这些塞进 [tauri.conf.json](src-tauri/tauri.conf.json) 现有的
-  单一 `targets: ["nsis"]` 列表——必须用 `--bundles` 参数按平台单独传，或改成 `"all"` 让 CLI
-  自动按 host 过滤。这两条路都还没验证过，但风险模型跟前三轮不一样：前三轮加的都是新的、独立的
-  CI job，出错只是新 job 失败；这一步要么改共享配置文件、要么改 `release.yml` 本身，出错的代价是
-  可能连累现在工作正常的 Windows 发布流程，值得单独更谨慎地对待，不该用同样的节奏推进。
+- 把这条打包路径接进 [tauri.conf.json](src-tauri/tauri.conf.json) 的共享 `targets: ["nsis"]`
+  列表或 `release.yml` 本身，让它成为真正的发布产物（而不只是 CI 里的一次性验证）：这一步要么改
+  共享配置文件、要么改 `release.yml`，出错的代价是可能连累现在工作正常的 Windows 发布流程，
+  值得单独更谨慎地对待，不该用前四轮"加一个独立 job"那种节奏推进。
 - 代码签名与公证：需要 Apple Developer 账号，没有，且这不是能靠 CI 绕过的技术问题，是纯粹的
   资源/credential 缺口。
 
