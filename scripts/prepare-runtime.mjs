@@ -31,22 +31,15 @@ if (sourceBin && existsSync(sourceBin)) {
   });
 } else {
   console.log(`Installing @deepseek-ai/dsh@${version} → ${runtimeDir}`);
+  // `npm` resolves inconsistently as a direct execFileSync target across
+  // Windows npm installs (plain PATH npm vs. nvm-managed shims, and the
+  // .cmd shim GitHub Actions' windows-latest runner uses); `shell: true`
+  // sidesteps that the same way a user's own shell would. runtimeDir and
+  // version are ours (env var / hardcoded default), not attacker input, so
+  // the shell-escaping caveat that comes with `shell: true` doesn't apply.
   execFileSync(
-    "npm",
-    [
-      "install",
-      "--prefix",
-      runtimeDir,
-      `@deepseek-ai/dsh@${version}`,
-      "--omit=dev",
-      "--no-audit",
-      "--no-fund",
-      "--no-progress",
-      "--prefer-offline",
-      "--fetch-retries=5",
-      "--fetch-retry-mintimeout=2000",
-    ],
-    { stdio: "inherit" },
+    `npm install --prefix "${runtimeDir}" "@deepseek-ai/dsh@${version}" --omit=dev --no-audit --no-fund --no-progress --prefer-offline --fetch-retries=5 --fetch-retry-mintimeout=2000`,
+    { stdio: "inherit", shell: true },
   );
 }
 
