@@ -242,6 +242,14 @@ pub fn run() {
                 disable_context_menu(&win);
             }
 
+            // A window/app menu set via `set_menu()` becomes the global
+            // top-of-screen menu bar on macOS (platform convention, doesn't
+            // cost window space) but a classic in-window Win32-style menu
+            // strip on Windows/Linux — stacked right under the native title
+            // bar, i.e. two layers of chrome for one "文件" entry. Every
+            // action it offered already lives in the tray menu below, so
+            // only set it on macOS.
+            #[cfg(target_os = "macos")]
             app.set_menu(menu::build_menu(&handle)?)?;
             menu::build_tray(&handle, handle_menu_action)?;
 

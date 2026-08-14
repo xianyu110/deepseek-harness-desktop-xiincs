@@ -6,9 +6,13 @@
 
 use std::sync::Arc;
 
-use tauri::menu::{Menu, MenuItem, Submenu};
+use tauri::menu::{Menu, MenuItem};
+#[cfg(target_os = "macos")]
+use tauri::menu::Submenu;
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Wry};
+use tauri::AppHandle;
+#[cfg(target_os = "macos")]
+use tauri::Wry;
 
 pub const MENU_OPEN_BROWSER: &str = "open_browser";
 pub const MENU_RESTART: &str = "restart";
@@ -16,6 +20,8 @@ pub const MENU_OPEN_DATA_DIR: &str = "open_data_dir";
 pub const MENU_SHOW_WINDOW: &str = "show_window";
 pub const MENU_QUIT: &str = "quit";
 
+/// macOS-only — see the `set_menu()` callsite in lib.rs for why.
+#[cfg(target_os = "macos")]
 pub fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     let open_browser = MenuItem::with_id(app, MENU_OPEN_BROWSER, "在浏览器中打开", true, None::<&str>)?;
     let restart = MenuItem::with_id(app, MENU_RESTART, "重启服务", true, None::<&str>)?;
@@ -32,8 +38,12 @@ pub fn build_tray(
     let show = MenuItem::with_id(app, MENU_SHOW_WINDOW, "显示窗口", true, None::<&str>)?;
     let open_browser = MenuItem::with_id(app, MENU_OPEN_BROWSER, "在浏览器中打开", true, None::<&str>)?;
     let restart = MenuItem::with_id(app, MENU_RESTART, "重启服务", true, None::<&str>)?;
+    // On Windows/Linux this tray is the *only* menu (see the `set_menu()`
+    // callsite in lib.rs) — include everything the removed window menu
+    // offered, not just what macOS's menu bar leaves uncovered.
+    let open_data_dir = MenuItem::with_id(app, MENU_OPEN_DATA_DIR, "打开数据目录 (~/.dsh)", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, MENU_QUIT, "退出", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show, &open_browser, &restart, &quit])?;
+    let menu = Menu::with_items(app, &[&show, &open_browser, &restart, &open_data_dir, &quit])?;
 
     // Shared between on_menu_event and on_tray_icon_event below (a left
     // click routes through the same MENU_SHOW_WINDOW id/handler as the
