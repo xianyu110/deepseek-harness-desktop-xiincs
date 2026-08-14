@@ -171,10 +171,26 @@ harness 内部状态，不新增 Tauri command。已在真实 Tauri webview（�
 **建议先做 A**，观察 harness 自身是否会在后续 RC 版本里把这个引导做进 stock 流程
 （上游本来就在快速迭代，首屏只推 DeepSeek 官方这一点也可能是上游自己会补的）。
 
-### 2. macOS 打包与验证
-**现状**：[tauri.conf.json](src-tauri/tauri.conf.json) 和 `resources/runtime` 都是 Windows-only，
-`server.rs` 里非 Windows 分支存在但从未跑过（见文件头注释 "non-Windows branches below are
-untested"）。
+### 2. macOS 打包与验证（部分推进：CI 上的 cargo check 已在三平台绿灯）
+**新增**：[.github/workflows/ci.yml](.github/workflows/ci.yml) 加了 windows/macos/ubuntu 三平台的
+`cargo check` job，推送后实测跑过——第一次跑三个平台全部失败（`tauri-build` 的 build script 硬性
+要求 `resources/runtime` 路径存在，这个目录只有跑过 `fetch:node`/`prepare:runtime` 才有内容，
+CI 里没跑那两步），修成先建一个空占位目录满足存在性检查后，三平台 `cargo check` 全部通过
+（[run](https://github.com/xiincs/deepseek-harness-desktop/actions/runs/31793561917)）。这是
+`server.rs` 里 `#[cfg(unix)]` 分支第一次被真正类型检查——之前"从未跑过"字面意义上是"从未编译过"
+（cfg 不匹配的代码根本不会被纳入编译单元，不是编译过没验证，是压根没编译）。
+
+**仍未做**：这只是 `cargo check`，不是 `tauri build`——真正的打包还需要 macOS 版
+`resources/runtime`（`fetch-node.mjs` 的 darwin 分支完全没跑过，`prepare-runtime.mjs` 的 npm
+install 部分理论上跨平台通用但也没实测）、`bundle.targets` 加 `dmg`/`app`（已查证 Tauri 对不属于
+当前平台的 target 是直接报错、不是静默跳过，所以不能简单把这些加进
+[tauri.conf.json](src-tauri/tauri.conf.json) 现有的单一 `targets: ["nsis"]` 列表里，必须用
+`--bundles` 参数按平台单独传，或改成 `"all"` 让 CLI 自动按 host 过滤——这两条路都没verify过，
+风险高于新增一个只读的 check job，这次没做）、代码签名与公证（需要 Apple Developer 账号，没有）。
+
+**现状（旧）**：[tauri.conf.json](src-tauri/tauri.conf.json) 和 `resources/runtime` 都是
+Windows-only，`server.rs` 里非 Windows 分支存在但从未跑过（见文件头注释 "non-Windows branches
+below are untested"）——这条注释现在已经不完全准确，见上方"新增"，但打包/签名部分依然成立。
 **为什么优先级高**：steven-kid（79 star）、dataelement（101 star）都已经在 macOS 上跑通，
 本项目路线图里这一项拖得越久，越可能被"全平台"的定位抢走用户心智。
 **已知平台坑**（来自 steven-kid [#1](https://github.com/steven-kid/deepseek-harness-desktop/issues/1)，
