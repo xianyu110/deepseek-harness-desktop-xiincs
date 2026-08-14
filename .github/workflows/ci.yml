@@ -118,6 +118,34 @@ jobs:
           # ROADMAP.md P0-3), not asserting a specific CLI flag exists.
           "$node" "$bin" --help
 
+  # Windows is the one platform actually shipping today (the signed NSIS
+  # release), yet `prepare-runtime` above — the job that would have caught
+  # exactly the "bundled runtime installs but doesn't actually run" failure
+  # class two other DSH desktop wrappers hit in production (ERR_MODULE_NOT_FOUND
+  # on launch; a native module missing from the packaged tree) — only ever
+  # ran on macos-latest/ubuntu-latest. "The bundler produced an .exe" and
+  # "the runtime inside that .exe actually loads" are different questions;
+  # this job answers the second one for the platform where it actually
+  # matters. `shell: bash` for the same reason the `check` job above uses it
+  # on windows-latest: Git Bash ships there by default and understands the
+  # forward-slash paths already used everywhere else in this file.
+  prepare-runtime-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - run: node scripts/fetch-node.mjs
+      - run: node scripts/prepare-runtime.mjs
+      - name: Smoke-test the installed dsh bin.js against the fetched node.exe
+        shell: bash
+        run: |
+          node="src-tauri/resources/runtime/node.exe"
+          bin="src-tauri/resources/runtime/node_modules/@deepseek-ai/dsh/lib/bin.js"
+          test -f "$bin" || { echo "::error::$bin missing after prepare-runtime.mjs"; exit 1; }
+          "$node" "$bin" --help
+
   # The last unverified link: does the bundler actually produce an
   # installable artifact on macOS/Linux at all. Uses `tauri build --bundles
   # <fmt>` — a per-invocation CLI override — specifically so this never
