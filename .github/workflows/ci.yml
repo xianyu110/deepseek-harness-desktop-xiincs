@@ -82,3 +82,38 @@ jobs:
           out="src-tauri/resources/runtime/node"
           test -x "$out" || { echo "::error::$out missing or not executable"; exit 1; }
           "$out" --version
+
+  # prepare-runtime.mjs's `npm install --prefix ... @deepseek-ai/dsh@...`
+  # path is nominally platform-generic (same npm command either way), but
+  # this project has never actually run it on macOS/Linux to confirm that
+  # holds — and "theoretically platform-generic" is exactly what turned out
+  # to be false for the parts of this bundled-runtime setup that *had* been
+  # checked (fetch-node.mjs needed this same kind of real verification
+  # before it could be trusted). Runs after fetch-node in the same job so
+  # the installed dsh's bin.js can be smoke-tested against the real fetched
+  # node binary, matching how a packaged build actually invokes it.
+  prepare-runtime:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - run: node scripts/fetch-node.mjs
+      - run: node scripts/prepare-runtime.mjs
+      - name: Smoke-test the installed dsh bin.js against the fetched node
+        shell: bash
+        run: |
+          node="src-tauri/resources/runtime/node"
+          bin="src-tauri/resources/runtime/node_modules/@deepseek-ai/dsh/lib/bin.js"
+          test -f "$bin" || { echo "::error::$bin missing after prepare-runtime.mjs"; exit 1; }
+          # --help, not --version: the point is confirming bin.js and its
+          # dependency tree load and run at all (catches a broken/partial
+          # node_modules install, the same failure class as the real
+          # production crash this project has already hit once — see
+          # ROADMAP.md P0-3), not asserting a specific CLI flag exists.
+          "$node" "$bin" --help

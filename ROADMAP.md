@@ -180,9 +180,17 @@ CI 里没跑那两步），修成先建一个空占位目录满足存在性检�
 `server.rs` 里 `#[cfg(unix)]` 分支第一次被真正类型检查——之前"从未跑过"字面意义上是"从未编译过"
 （cfg 不匹配的代码根本不会被纳入编译单元，不是编译过没验证，是压根没编译）。
 
-**仍未做**：这只是 `cargo check`，不是 `tauri build`——真正的打包还需要 macOS 版
-`resources/runtime`（`fetch-node.mjs` 的 darwin 分支完全没跑过，`prepare-runtime.mjs` 的 npm
-install 部分理论上跨平台通用但也没实测）、`bundle.targets` 加 `dmg`/`app`（已查证 Tauri 对不属于
+**新增（第二轮）**：加了 `fetch-node` CI job，在 macOS/Linux 上真实跑了一次
+`node scripts/fetch-node.mjs`（不是短路跳过——日志里能看到真实的
+`https://nodejs.org/dist/v24.9.0/node-v24.9.0-darwin-arm64.tar.gz` 下载 URL、解压过程、两次独立
+`--version` 校验都输出 `v24.9.0`）。darwin 和 linux 分支都通过
+（[run](https://github.com/xiincs/deepseek-harness-desktop/actions/runs/31794303728)）——这是这两个
+分支写下来之后第一次被真正执行过。
+
+**仍未做**：这只是 `cargo check` + 单独的 `fetch-node.mjs` 验证，不是 `tauri build`——真正的打包
+还需要 `prepare-runtime.mjs` 的 npm install 部分在 macOS/Linux 上实测（理论上跨平台通用，但和
+`fetch-node.mjs` 一样"理论上"这个词在这个项目里已经不可信了，下一步应该测这个）、`bundle.targets`
+加 `dmg`/`app`（已查证 Tauri 对不属于
 当前平台的 target 是直接报错、不是静默跳过，所以不能简单把这些加进
 [tauri.conf.json](src-tauri/tauri.conf.json) 现有的单一 `targets: ["nsis"]` 列表里，必须用
 `--bundles` 参数按平台单独传，或改成 `"all"` 让 CLI 自动按 host 过滤——这两条路都没verify过，
