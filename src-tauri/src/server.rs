@@ -498,6 +498,53 @@ fn heal_stale_symlink(app: &AppHandle, server: &Shared, path: &Path) -> bool {
     }
 }
 
+// ── PATH ─────────────────────────────────────────────────────────────────────
+
+/// A GUI app launched from Explorer/Start Menu inherits whatever `PATH` its
+/// own parent process had — normally fine, but that value is only ever
+/// recomputed at logon. Install Node/Git/etc. and *not* log off first (a
+/// completely ordinary sequence: install desktop app → open it right away)
+/// and the running desktop process — and everything it spawns, including
+/// every tool `dsh` shells out to on the agent's behalf (pwsh, git, …) —
+/// inherits that stale, possibly near-empty `PATH`. Rebuild it from the
+/// registry (the actual source of truth Windows itself recomputes PATH
+/// from at logon) instead of trusting whatever this process happened to
+/// start with. Falls back to the process's own `PATH` if the registry read
+/// fails for any reason — never worse than doing nothing.
+#[cfg(windows)]
+fn effective_path() -> String {
+    use winreg::enums::HKEY_CURRENT_USER;
+    use winreg::enums::HKEY_LOCAL_MACHINE;
+    use winreg::RegKey;
+
+    let machine = RegKey::predef(HKEY_LOCAL_MACHINE)
+        .open_subkey(r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment")
+        .and_then(|k| k.get_value::<String, _>("Path"))
+        .unwrap_or_default();
+    let user = RegKey::predef(HKEY_CURRENT_USER)
+        .open_subkey("Environment")
+        .and_then(|k| k.get_value::<String, _>("Path"))
+        .unwrap_or_default();
+    // Matches Windows' own logon-time order: machine entries first, then
+    // user entries. Also keep whatever this process already had (e.g. a
+    // launcher-prepended entry) so nothing already-working regresses.
+    let current = env_nonempty("PATH").unwrap_or_default();
+    let mut parts: Vec<&str> = Vec::new();
+    for source in [machine.as_str(), user.as_str(), current.as_str()] {
+        for p in source.split(';') {
+            let p = p.trim();
+            if !p.is_empty() && !parts.contains(&p) {
+                parts.push(p);
+            }
+        }
+    }
+    parts.join(";")
+}
+#[cfg(not(windows))]
+fn effective_path() -> String {
+    env_nonempty("PATH").unwrap_or_default()
+}
+
 // ── probing & spawning ───────────────────────────────────────────────────────
 
 /// Cheap dependency-free HTTP probe: does `http://host:port/` serve the
@@ -584,6 +631,10 @@ fn spawn(app: &AppHandle, server: &Shared, node: &str, bin: &str, port: u16) -> 
     let mut cmd = Command::new(node);
     cmd.arg(bin).arg("web").arg("--port").arg(port.to_string());
     cmd.current_dir(&cwd_plain);
+    // See `effective_path`: every tool call dsh shells out to on the
+    // agent's behalf inherits this, so a stale/truncated PATH here doesn't
+    // just affect the dsh process — it breaks pwsh/git/etc. tool calls too.
+    cmd.env("PATH", effective_path());
     cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     own_process_group(&mut cmd);
     hide_console(&mut cmd);

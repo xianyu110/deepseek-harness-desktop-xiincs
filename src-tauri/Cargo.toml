@@ -28,6 +28,9 @@ serde_json = "1"
 # see `disable_context_menu` in lib.rs.
 webview2-com = "0.38"
 windows = { version = "0.61", features = ["Win32_Foundation"] }
+# Reads the registry's real user+machine PATH — see `effective_path` in
+# server.rs.
+winreg = "0.52"
 
 [profile.release]
 codegen-units = 1
