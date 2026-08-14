@@ -47,6 +47,17 @@ const AUTO_RESTART_MIN_GAP: Duration = Duration::from_secs(60);
 /// starts can be slow, but an upstream format change (see `URL_PREFIX`)
 /// would otherwise hang here forever with no feedback on the boot page.
 const READY_TIMEOUT: Duration = Duration::from_secs(45);
+/// Substring of the error `@deepseek-ai/dsh-app-boot`'s `ensureSymlink`
+/// throws when `~/.dsh/profiles/node_modules/@deepseek-ai/<pkg>` is a real
+/// directory instead of the managed symlink dsh expects there — observed in
+/// practice from a `~/.dsh` a concurrent dsh process had corrupted. See
+/// `extract_stale_symlink_path`.
+const STALE_SYMLINK_MARKER: &str = " exists and is not a symlink; remove it so dsh can manage the installation fallback";
+/// Cap on automatic heal-and-retry cycles per `start_inner` call. dsh reports
+/// these one at a time (fixing one reveals the next), so a real `~/.dsh` with
+/// several needs more than one retry — but this must stay bounded in case a
+/// heal ever fails to actually clear the condition.
+const MAX_HEAL_ATTEMPTS: u32 = 5;
 
 /// Optional persistent log file, set once via [`init_log_file`] at startup.
 static LOG_FILE: OnceLock<PathBuf> = OnceLock::new();
@@ -404,7 +415,14 @@ fn install_runtime(app: &AppHandle, server: &Shared, rd: &Path) -> Result<(), St
         match output.try_wait() {
             Ok(Some(status)) => break status,
             Ok(None) => thread::sleep(Duration::from_millis(300)),
-            Err(e) => return Err(format!("npm install 进程错误: {e}")),
+            Err(e) => {
+                // Clear install_pid before returning — otherwise a stale PID
+                // lingers in shared state and a later `stop()` could
+                // taskkill whatever unrelated process the OS has since
+                // reused that PID number for.
+                server.lock().unwrap().install_pid = None;
+                return Err(format!("npm install 进程错误: {e}"));
+            }
         }
     };
     {
@@ -415,6 +433,69 @@ fn install_runtime(app: &AppHandle, server: &Shared, rd: &Path) -> Result<(), St
         return Err(format!("npm install 失败（exit {:?}），请查看日志。", status.code()));
     }
     Ok(())
+}
+
+// ── self-heal: stale profiles/node_modules symlinks ─────────────────────────
+
+/// Extracts the offending path from a dsh bootstrap error line matching
+/// [`STALE_SYMLINK_MARKER`], e.g.:
+/// `dsh: C:\Users\x\.dsh\profiles\node_modules\@deepseek-ai\foo exists and
+/// is not a symlink; remove it so dsh can manage the installation fallback`
+/// Returns `None` for any line that doesn't match this exact, narrow shape.
+fn extract_stale_symlink_path(line: &str) -> Option<PathBuf> {
+    let marker_idx = line.find(STALE_SYMLINK_MARKER)?;
+    let prefix = "dsh: ";
+    let prefix_idx = line.find(prefix)?;
+    if prefix_idx >= marker_idx {
+        return None;
+    }
+    let path_str = line[prefix_idx + prefix.len()..marker_idx].trim();
+    if path_str.is_empty() {
+        return None;
+    }
+    Some(PathBuf::from(path_str))
+}
+
+/// Removes a stale, empty, non-symlink directory that dsh's own bootstrap
+/// flagged (see `extract_stale_symlink_path`) so dsh can recreate it as the
+/// managed symlink it expects on the next attempt. Deliberately narrow:
+/// only acts on a path that is (a) inside `~/.dsh/profiles/node_modules/
+/// @deepseek-ai/`, matching every real instance seen so far, and (b) an
+/// empty directory, not a symlink — anything else is left alone (and logged
+/// as skipped) rather than silently deleted on dsh's stderr's say-so alone.
+/// Returns whether it actually removed something.
+fn heal_stale_symlink(app: &AppHandle, server: &Shared, path: &Path) -> bool {
+    let expected_prefix = dsh_home_dir(app).join("profiles").join("node_modules").join("@deepseek-ai");
+    if !path.starts_with(&expected_prefix) {
+        push_log(server, format!("跳过自动清理（路径不在预期范围内）：{}", path.display()));
+        return false;
+    }
+    let meta = match fs::symlink_metadata(path) {
+        Ok(m) => m,
+        Err(_) => return false, // already gone (e.g. a stale re-detection of an earlier heal)
+    };
+    if meta.file_type().is_symlink() || !meta.is_dir() {
+        push_log(server, format!("跳过自动清理（不是预期的普通目录）：{}", path.display()));
+        return false;
+    }
+    let is_empty = fs::read_dir(path).map(|mut it| it.next().is_none()).unwrap_or(false);
+    if !is_empty {
+        push_log(server, format!("跳过自动清理（目录非空，可能有需要保留的内容）：{}", path.display()));
+        return false;
+    }
+    match fs::remove_dir(path) {
+        Ok(()) => {
+            push_log(
+                server,
+                format!("已自动清理残留目录（dsh 将在下次启动时重建为符号链接）：{}", path.display()),
+            );
+            true
+        }
+        Err(e) => {
+            push_log(server, format!("自动清理残留目录失败：{} ({e})", path.display()));
+            false
+        }
+    }
 }
 
 // ── probing & spawning ───────────────────────────────────────────────────────
@@ -539,8 +620,16 @@ fn spawn(app: &AppHandle, server: &Shared, node: &str, bin: &str, port: u16) -> 
                 let rest = &line[idx + URL_PREFIX.len()..];
                 let port: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
                 if !port.is_empty() {
-                    let url = format!("http://127.0.0.1:{port}");
-                    set_running(&app2, &srv2, &url);
+                    // Only this reader's own child may report itself ready. A
+                    // stale line from a child already superseded by a newer
+                    // spawn (e.g. a fast restart) must not resurrect it as
+                    // the active server — see the exit watcher below for the
+                    // same guard against the mirror-image race.
+                    let is_current = srv2.lock().unwrap().pid == Some(pid);
+                    if is_current {
+                        let url = format!("http://127.0.0.1:{port}");
+                        set_running(&app2, &srv2, &url);
+                    }
                 }
             }
         }
@@ -561,11 +650,24 @@ fn spawn(app: &AppHandle, server: &Shared, node: &str, bin: &str, port: u16) -> 
     thread::spawn(move || {
         let exit = child.wait();
         let code = exit.ok().and_then(|st| st.code());
-        let requested = {
+        // If a newer spawn already replaced this child (e.g. `restart()`
+        // killed it and started a fresh one before this thread got to reap
+        // the old one), `s.pid` now holds that *other*, live pid — not `pid`
+        // and not `None`. Only that specific case is stale: `s.pid == None`
+        // still means "nobody's spawned since `stop()` cleared it", which is
+        // the ordinary stop path and must still fall through to report
+        // `Stopped` below. Don't clobber a newer pid; do clear our own.
+        let (requested, is_stale) = {
             let mut s = srv4.lock().unwrap();
-            s.pid = None;
-            s.requested_stop
+            let is_stale = matches!(s.pid, Some(other) if other != pid);
+            if !is_stale {
+                s.pid = None;
+            }
+            (s.requested_stop, is_stale)
         };
+        if is_stale {
+            return;
+        }
         if requested {
             set_status(&app3, &srv4, ServerStatus::Stopped { code, message: None });
             return;
@@ -628,6 +730,17 @@ pub fn stop(server: &Shared) {
     }
 }
 
+/// Stop the current server, then start fresh. Blocks briefly (this is meant
+/// to be called from a spawned thread, not the main/event-loop thread) so
+/// the old process tree is well clear of the port/`~/.dsh` before the new
+/// one starts. Shared by the tray/menu restart action and the
+/// `restart_server` command so both go through the exact same choreography.
+pub fn restart(app: &AppHandle, server: &Shared) {
+    stop(server);
+    thread::sleep(Duration::from_millis(600));
+    let _ = start(app, server);
+}
+
 /// The default bind port; `DSH_DESKTOP_PORT` overrides it (useful for
 /// running several desktop instances side by side for testing).
 pub fn default_port() -> u16 {
@@ -677,18 +790,25 @@ fn start_inner(app: &AppHandle, server: &Shared) -> Result<(), String> {
 
     // If the port is taken by a non-dsh process, the child exits quickly with
     // EADDRINUSE; fall back to an OS-assigned port (the URL line is parsed
-    // from stdout by the reader thread). If the process stays alive but never
-    // prints its ready URL line — e.g. an upstream format change broke
-    // `URL_PREFIX` matching — surface an error instead of leaving the boot
-    // page stuck on "starting" forever.
+    // from stdout by the reader thread). If it exits because dsh's own
+    // bootstrap found a stale, non-symlink entry under ~/.dsh/profiles (see
+    // `heal_stale_symlink`), clear it and retry on the same port — bounded,
+    // since dsh reports these one at a time and a real ~/.dsh can have more
+    // than one. If the process stays alive but never prints its ready URL
+    // line — e.g. an upstream format change broke `URL_PREFIX` matching —
+    // surface an error instead of leaving the boot page stuck on "starting"
+    // forever.
     let ready_deadline = Instant::now() + READY_TIMEOUT;
+    let mut heal_attempts = 0u32;
     loop {
-        let (running, exited, eaddr) = {
+        let (running, exited, eaddr, stale_symlink) = {
             let s = server.lock().unwrap();
+            let stale_symlink = s.logs.iter().rev().find_map(|l| extract_stale_symlink_path(l));
             (
                 matches!(s.status, ServerStatus::Running { .. }),
                 s.pid.is_none(),
                 s.logs.iter().any(|l| l.contains("EADDRINUSE")),
+                stale_symlink,
             )
         };
         if running {
@@ -700,7 +820,14 @@ fn start_inner(app: &AppHandle, server: &Shared) -> Result<(), String> {
             return Ok(());
         }
         if exited {
-            // Exited for a reason other than EADDRINUSE: the exit-watcher
+            if let Some(path) = &stale_symlink {
+                if heal_attempts < MAX_HEAL_ATTEMPTS && heal_stale_symlink(app, server, path) {
+                    heal_attempts += 1;
+                    spawn(app, server, &node, &bin, port)?;
+                    continue;
+                }
+            }
+            // Exited for a reason other than the above: the exit-watcher
             // thread from `spawn` already owns status/logs for this case
             // (auto-restart or a surfaced error), nothing more to do here.
             return Ok(());
@@ -737,4 +864,50 @@ pub fn info(app: &AppHandle, server: &Shared) -> serde_json::Value {
         "dshHome": dsh_home_dir(app).to_string_lossy(),
         "runtimeDir": runtime_dir(app).to_string_lossy(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Real error lines captured verbatim from `@deepseek-ai/dsh-app-boot`'s
+    // `ensureSymlink` (two separate incidents, same shape, different package).
+    const REAL_LINE_1: &str = r"Error: dsh: C:\Users\him69\.dsh\profiles\node_modules\@deepseek-ai\cordis-plugin-loader exists and is not a symlink; remove it so dsh can manage the installation fallback";
+    const REAL_LINE_2: &str = r"Error: dsh: C:\Users\him69\.dsh\profiles\node_modules\@deepseek-ai\dsh-spill-policy exists and is not a symlink; remove it so dsh can manage the installation fallback";
+
+    #[test]
+    fn extracts_path_from_real_captured_errors() {
+        assert_eq!(
+            extract_stale_symlink_path(REAL_LINE_1),
+            Some(PathBuf::from(
+                r"C:\Users\him69\.dsh\profiles\node_modules\@deepseek-ai\cordis-plugin-loader"
+            ))
+        );
+        assert_eq!(
+            extract_stale_symlink_path(REAL_LINE_2),
+            Some(PathBuf::from(
+                r"C:\Users\him69\.dsh\profiles\node_modules\@deepseek-ai\dsh-spill-policy"
+            ))
+        );
+    }
+
+    #[test]
+    fn ignores_unrelated_lines() {
+        assert_eq!(extract_stale_symlink_path("dsh web: http://127.0.0.1:3080"), None);
+        assert_eq!(extract_stale_symlink_path(""), None);
+        assert_eq!(
+            extract_stale_symlink_path("some other error entirely unrelated to symlinks"),
+            None
+        );
+    }
+
+    #[test]
+    fn ignores_marker_without_a_path_prefix() {
+        // Marker present but no "dsh: " prefix before it — malformed/foreign
+        // input should not be parsed as a real dsh error.
+        assert_eq!(
+            extract_stale_symlink_path("exists and is not a symlink; remove it so dsh can manage the installation fallback"),
+            None
+        );
+    }
 }

@@ -51,11 +51,7 @@ fn start_server(app: AppHandle, state: State<'_, AppState>) -> Result<(), String
 #[tauri::command]
 fn restart_server(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     let srv = state.server.clone();
-    thread::spawn(move || {
-        server::stop(&srv);
-        thread::sleep(Duration::from_millis(600));
-        let _ = server::start(&app, &srv);
-    });
+    thread::spawn(move || server::restart(&app, &srv));
     Ok(())
 }
 
@@ -123,6 +119,20 @@ async fn install_update(app: AppHandle) -> Result<(), String> {
     app.restart();
 }
 
+// ── window helpers ───────────────────────────────────────────────────────────
+
+/// Un-hide, un-minimize, and focus the main window. Used by both the tray's
+/// "显示窗口" action and the single-instance relaunch callback below, so a
+/// second launch attempt (desktop icon, Start menu, ...) surfaces the
+/// existing window instead of spawning a second process/window/tray icon.
+fn show_main_window(app: &AppHandle) {
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.show();
+        let _ = win.unminimize();
+        let _ = win.set_focus();
+    }
+}
+
 // ── menu / tray actions ──────────────────────────────────────────────────────
 
 fn handle_menu_action(app: &AppHandle, id: &str) {
@@ -136,24 +146,14 @@ fn handle_menu_action(app: &AppHandle, id: &str) {
         menu::MENU_RESTART => {
             let srv = state.server.clone();
             let app2 = app.clone();
-            thread::spawn(move || {
-                server::stop(&srv);
-                thread::sleep(Duration::from_millis(600));
-                let _ = server::start(&app2, &srv);
-            });
+            thread::spawn(move || server::restart(&app2, &srv));
         }
         menu::MENU_OPEN_DATA_DIR => {
             let home = server::dsh_home_dir(app);
             let _ = std::fs::create_dir_all(&home);
             let _ = app.opener().reveal_item_in_dir(&home);
         }
-        menu::MENU_SHOW_WINDOW => {
-            if let Some(win) = app.get_webview_window("main") {
-                let _ = win.show();
-                let _ = win.unminimize();
-                let _ = win.set_focus();
-            }
-        }
+        menu::MENU_SHOW_WINDOW => show_main_window(app),
         menu::MENU_QUIT => {
             // stop() is a safe no-op in attach mode (pid stays None there),
             // so this only tears down a server we actually spawned.
@@ -168,6 +168,14 @@ fn handle_menu_action(app: &AppHandle, id: &str) {
 
 pub fn run() {
     tauri::Builder::default()
+        // Must be the first plugin registered: it needs to claim the
+        // single-instance lock before anything else in the builder chain
+        // runs. A second launch (desktop icon, Start menu, ...) hits this
+        // callback in the *first* process and exits immediately instead of
+        // creating its own window/tray icon — see `show_main_window`.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            show_main_window(app);
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
