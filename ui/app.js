@@ -23,7 +23,25 @@ const els = {
   updateText: document.getElementById("update-text"),
   btnUpdateInstall: document.getElementById("btn-update-install"),
   btnUpdateDismiss: document.getElementById("btn-update-dismiss"),
+  providerTip: document.getElementById("provider-tip"),
+  btnProviderTipDismiss: document.getElementById("btn-provider-tip-dismiss"),
 };
+
+// Shown once (best-effort) during the first-ever boot wait, so new users
+// discover the existing Settings → 模型 → 添加提供方 flow without us having
+// to touch the harness page itself (it's a remote page with zero IPC access
+// — see main.rs). Purely informational: never blocks or delays navigation to
+// the harness UI once the server is ready.
+const PROVIDER_TIP_DISMISSED_KEY = "dsh-desktop-provider-tip-dismissed";
+
+function initProviderTip() {
+  if (localStorage.getItem(PROVIDER_TIP_DISMISSED_KEY)) return;
+  els.providerTip.classList.remove("hidden");
+  els.btnProviderTipDismiss.addEventListener("click", () => {
+    localStorage.setItem(PROVIDER_TIP_DISMISSED_KEY, "1");
+    els.providerTip.classList.add("hidden");
+  });
+}
 
 let logsVisible = false;
 let logsStartingVisible = false;
@@ -147,6 +165,7 @@ async function init() {
     });
   });
   checkForUpdate();
+  initProviderTip();
 
   await refresh();
 }

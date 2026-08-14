@@ -54,6 +54,17 @@
         </div>
       </div>
 
+      <!-- first-run provider tip (non-blocking, shown once, dismissed via localStorage) -->
+      <div id="provider-tip" class="provider-tip hidden">
+        <span
+          >首次使用提示：默认使用 DeepSeek 官方模型。如需接入 OpenAI / Anthropic / Gemini
+          等其他模型，进入后可在「设置 → 模型 → 添加提供方」中配置，随时可改。</span
+        >
+        <div class="provider-tip-actions">
+          <button id="btn-provider-tip-dismiss">知道了</button>
+        </div>
+      </div>
+
       <footer id="footer"></footer>
     </main>
     <script src="app.js"></script>

@@ -227,3 +227,36 @@ button:disabled {
   padding: 6px 14px;
   font-size: 12px;
 }
+
+/* provider tip banner (neutral, not the update banner's accent blue —
+   informational rather than action-needed) */
+.provider-tip {
+  margin-top: 18px;
+  padding: 12px 16px;
+  background: var(--sidebar-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.provider-tip span {
+  font-size: 13px;
+  color: var(--muted);
+  text-align: left;
+  line-height: 1.5;
+}
+
+.provider-tip-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.provider-tip-actions button {
+  padding: 6px 14px;
+  font-size: 12px;
+}
