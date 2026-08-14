@@ -155,7 +155,18 @@ jobs:
       - run: npm install
       - run: node scripts/fetch-node.mjs
       - run: node scripts/prepare-runtime.mjs
+      # tauri.conf.json has an updater pubkey configured, so a successful
+      # bundle is followed by an attempt to also produce a signed updater
+      # artifact — which fails without TAURI_SIGNING_PRIVATE_KEY (correctly
+      # not set here; that's release.yml's secret, not this throwaway
+      # job's). That failure is real but happens *after* the bundle itself
+      # is already written to disk; `continue-on-error` lets the dedicated
+      # existence check below be the actual pass/fail signal instead of
+      # this command's raw exit code, which conflates "did bundling work"
+      # with "did signing work" — the latter is out of scope here (see the
+      # job's header comment on why).
       - run: npx tauri build --bundles ${{ matrix.format }}
+        continue-on-error: true
       - name: Verify a bundle artifact was actually produced
         shell: bash
         run: |
