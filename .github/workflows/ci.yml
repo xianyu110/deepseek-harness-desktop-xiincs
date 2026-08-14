@@ -30,6 +30,18 @@ jobs:
 
       - run: npm install
 
+      # tauri-build's build script hard-fails cargo check itself if the
+      # `bundle.resources` path (resources/runtime, populated by `npm run
+      # fetch:node`/`prepare:runtime`) doesn't exist on disk at all — it
+      # doesn't need real content for a type-check, just to exist. Fetching
+      # the real runtime here would defeat the point (this job exists
+      # because the macOS/Linux fetch-node.mjs branches are unverified; a
+      # job that depends on them succeeding isn't testing what it claims
+      # to). `shell: bash` because windows-latest defaults `run:` to
+      # PowerShell, which doesn't understand `mkdir -p`.
+      - run: mkdir -p src-tauri/resources/runtime
+        shell: bash
+
       # This is the actual point of running on macos-latest/ubuntu-latest:
       # the #[cfg(unix)] branches in server.rs (own_process_group,
       # kill_process_tree's SIGTERM path, ...) are entirely excluded from
