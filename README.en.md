@@ -5,9 +5,17 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![Latest release](https://img.shields.io/github/v/release/xiincs/deepseek-harness-desktop)](https://github.com/xiincs/deepseek-harness-desktop/releases/latest)
 [![Platform: Windows](https://img.shields.io/badge/platform-Windows-0078D6)](#)
+[![Platform: macOS](https://img.shields.io/badge/platform-macOS-000000)](#)
+[![Platform: Linux](https://img.shields.io/badge/platform-Linux-FCC624)](#)
 [![Built with Tauri 2](https://img.shields.io/badge/built%20with-Tauri%202-24C8DB)](https://v2.tauri.app/)
 
-A desktop app for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness), built with [Tauri 2](https://v2.tauri.app/).
+A desktop app for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness), built with
+[Tauri 2](https://v2.tauri.app/). The Windows installer is signed and wired into auto-update;
+macOS (`.dmg`) and Linux (`.deb`) builds are also published with every release, but are
+**unsigned and unnotarized** (no Apple Developer account) — macOS needs a one-time manual
+allow in System Settings → Privacy & Security, Linux installs normally via `dpkg -i` or your
+package manager, and neither participates in auto-update — you'll need to download new
+versions manually.
 
 It wraps the harness's own web server (`dsh web`) in a native window: the app spawns a local
 `dsh` server process, waits for it to be ready, and points an embedded WebView2 at it — the same
@@ -110,13 +118,14 @@ the shell — every shell action goes through the native menu/tray or the local 
       blast radius of a bad release, so nothing goes live unattended). See
       [Two version axes](#two-version-axes) below for how this interacts with the bundled `dsh`
       runtime version.
-- [ ] macOS build — partially started: `src-tauri/src/server.rs`'s process handling
-      (`node.exe`/`taskkill`/`cmd /C npm`) is now behind a `platform` section with non-Windows
-      branches, but those branches are **untested** (no Mac hardware/CI here), `tauri.conf.json`'s
-      `bundle.targets` is still Windows-only (`["nsis"]`, needs a `dmg`/`app` config for macOS —
-      not added yet since it couldn't be verified), and `scripts/fetch-node.mjs` still only
-      downloads the Windows Node binary. Whoever picks this up on real macOS hardware: start by
-      running `npm run tauri dev` unpackaged to shake out `server.rs`'s Unix branches first
+- [x] macOS / Linux packaging: `server.rs`'s Unix branches, `fetch-node.mjs`'s darwin/linux
+      download paths, and `prepare-runtime.mjs`'s runtime install are all verified on GitHub
+      Actions `macos-latest`/`ubuntu-latest` runners (see
+      [.github/workflows/ci.yml](.github/workflows/ci.yml)); `tauri build --bundles dmg`/`--bundles
+      deb` produce real installable artifacts and are wired into
+      [release.yml](.github/workflows/release.yml). What's still missing is code signing and
+      notarization — needs an Apple Developer account this project doesn't have, so these two
+      platforms' builds ship unsigned (see the note above)
 
 ## Building the installer
 

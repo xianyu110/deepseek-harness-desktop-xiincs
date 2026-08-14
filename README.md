@@ -5,10 +5,15 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 [![Latest release](https://img.shields.io/github/v/release/xiincs/deepseek-harness-desktop)](https://github.com/xiincs/deepseek-harness-desktop/releases/latest)
 [![Platform: Windows](https://img.shields.io/badge/platform-Windows-0078D6)](#)
+[![Platform: macOS](https://img.shields.io/badge/platform-macOS-000000)](#)
+[![Platform: Linux](https://img.shields.io/badge/platform-Linux-FCC624)](#)
 [![Built with Tauri 2](https://img.shields.io/badge/built%20with-Tauri%202-24C8DB)](https://v2.tauri.app/)
 
-[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的 Windows 原生桌面版，基于
-[Tauri 2](https://v2.tauri.app/) 构建。
+[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的原生桌面版，基于
+[Tauri 2](https://v2.tauri.app/) 构建。Windows 安装包经过签名并接入自动更新；macOS（`.dmg`）和
+Linux（`.deb`）也在每个 Release 里提供，但**未签名、未公证**（没有 Apple Developer 账号）——
+macOS 上需要在"系统设置 → 隐私与安全性"里手动允许打开一次，Linux 直接 `dpkg -i`/系统安装器
+装即可，两者都不参与自动更新，需要手动下载新版本。
 
 它把 harness 自带的 Web 服务（`dsh web`）装进原生窗口：应用会自动拉起本地 `dsh` 服务进程，等它就绪后
 把内置的 WebView2 指向它——界面和数据都跟浏览器版完全一致（打开 `http://127.0.0.1:3080` 看到的同一个
@@ -100,12 +105,12 @@ harness 页面从 `http://127.0.0.1:<port>` 加载，故意**不**授予 Tauri I
       `.github/workflows/release.yml` 在每次推送 `v*` tag 时构建、签名并创建一个 GitHub 草稿 Release
       （仍需人工点击发布——自动更新一旦出问题影响的是所有已装用户，所以不会有任何东西未经确认就自动
       上线）。内置 `dsh` 运行时版本与这个机制的关系见下文的"两条独立的版本轴线"
-- [ ] macOS 版本——已经开了个头：`src-tauri/src/server.rs` 里 Windows 专属的那部分逻辑
-      （`node.exe`/`taskkill`/`cmd /C npm`）现在收进了一个 `platform` 分区，也写了非 Windows 分支，
-      但这些分支**还没有实测过**（没有 Mac 硬件和 CI 可用），`tauri.conf.json` 的 `bundle.targets`
-      目前也还只支持 Windows（`["nsis"]`，macOS 需要加 `dmg`/`app` 配置——因为没法验证所以还没加），
-      `scripts/fetch-node.mjs` 也还只会下载 Windows 版的 Node 二进制。如果你在真实 Mac 硬件上接手这
-      部分：建议先用 `npm run tauri dev` 跑一个不打包的开发版，把 `server.rs` 里的 Unix 分支跑通再说
+- [x] macOS / Linux 打包：`server.rs` 里的 Unix 分支、`fetch-node.mjs` 的 darwin/linux 下载分支、
+      `prepare-runtime.mjs` 的运行时安装，都在 GitHub Actions 的 `macos-latest`/`ubuntu-latest`
+      runner 上验证过（见 [.github/workflows/ci.yml](.github/workflows/ci.yml)），`tauri build
+      --bundles dmg`/`--bundles deb` 也已产出真实安装包并接进
+      [release.yml](.github/workflows/release.yml)。仍未做的是代码签名与公证——需要 Apple
+      Developer 账号，目前没有，所以这两个平台的安装包是未签名状态（见上方说明）
 
 ## 打包安装程序
 
