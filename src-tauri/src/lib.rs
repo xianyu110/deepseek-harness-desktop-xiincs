@@ -139,11 +139,35 @@ async fn install_update(app: AppHandle) -> Result<(), String> {
 /// "显示窗口" action and the single-instance relaunch callback below, so a
 /// second launch attempt (desktop icon, Start menu, ...) surfaces the
 /// existing window instead of spawning a second process/window/tray icon.
+/// Callers include `tauri_plugin_single_instance`'s relaunch callback, which
+/// fires on whatever thread delivers the second-instance IPC message — not
+/// necessarily the main/event-loop thread window operations need to run on.
+/// Confirmed by direct testing: called from that path, `win.show()` et al.
+/// silently no-op (previously `let _ = ...`'d away with nothing logged) even
+/// though the exact same window responds fine to an externally-driven
+/// activation. `run_on_main_thread` dispatches back to the right thread
+/// regardless of where this was called from, so every caller — tray click,
+/// single-instance relaunch — gets the same, actually-working behavior.
 fn show_main_window(app: &AppHandle) {
-    if let Some(win) = app.get_webview_window("main") {
-        let _ = win.show();
-        let _ = win.unminimize();
-        let _ = win.set_focus();
+    let app_in_closure = app.clone();
+    let result = app.run_on_main_thread(move || {
+        let app = app_in_closure;
+        if let Some(win) = app.get_webview_window("main") {
+            if let Err(e) = win.show() {
+                eprintln!("[dsh-desktop] show_main_window: show() failed: {e}");
+            }
+            if let Err(e) = win.unminimize() {
+                eprintln!("[dsh-desktop] show_main_window: unminimize() failed: {e}");
+            }
+            if let Err(e) = win.set_focus() {
+                eprintln!("[dsh-desktop] show_main_window: set_focus() failed: {e}");
+            }
+        } else {
+            eprintln!("[dsh-desktop] show_main_window: no window labeled \"main\"");
+        }
+    });
+    if let Err(e) = result {
+        eprintln!("[dsh-desktop] show_main_window: run_on_main_thread failed: {e}");
     }
 }
 
