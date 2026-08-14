@@ -65,7 +65,7 @@ pub fn build_tray(
     let on_action = Arc::new(on_action);
     let on_action_click = on_action.clone();
 
-    let mut builder = TrayIconBuilder::with_id("main-tray")
+    let mut builder = TrayIconBuilder::with_id(crate::server::TRAY_ID)
         .tooltip("DeepSeek Harness")
         .menu(&menu)
         // Left click shows the window directly; only right click opens this

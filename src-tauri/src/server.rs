@@ -30,6 +30,10 @@ use std::os::windows::process::CommandExt as _;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
+/// Tray icon id, shared with `menu::build_tray`'s `TrayIconBuilder::with_id`
+/// so `set_status` can look the tray up by id to update its tooltip.
+pub const TRAY_ID: &str = "main-tray";
+
 pub const DEFAULT_PORT: u16 = 3080;
 
 /// Default npm version spec for the managed `@deepseek-ai/dsh` runtime.
@@ -121,10 +125,27 @@ pub type Shared = Arc<Mutex<DshServer>>;
 
 // ── status / logs ────────────────────────────────────────────────────────────
 
+/// Tooltip text for the tray icon — the one status signal visible without
+/// opening the window. Kept short (tray tooltips are single-line on most
+/// platforms) rather than reusing the boot page's more detailed messages.
+fn tray_tooltip_text(status: &ServerStatus) -> String {
+    let detail = match status {
+        ServerStatus::Idle => "空闲",
+        ServerStatus::Starting { .. } => "启动中…",
+        ServerStatus::Running { .. } => "运行中",
+        ServerStatus::Stopped { .. } => "已停止",
+        ServerStatus::Error { .. } => "⚠ 出错",
+    };
+    format!("DeepSeek Harness — {detail}")
+}
+
 fn set_status(app: &AppHandle, server: &Shared, status: ServerStatus) {
     {
         let mut s = server.lock().unwrap();
         s.status = status.clone();
+    }
+    if let Some(tray) = app.tray_by_id(TRAY_ID) {
+        let _ = tray.set_tooltip(Some(tray_tooltip_text(&status)));
     }
     let _ = app.emit("server-status", status);
 }
