@@ -54,3 +54,31 @@ jobs:
       # ROADMAP.md's P0-2/P1-4) — that's a separate, bigger step from "does
       # the platform-generic Rust code even compile here."
       - run: cargo check --manifest-path src-tauri/Cargo.toml --no-default-features
+
+  # fetch-node.mjs's darwin/linux branches have never run anywhere — this
+  # project has only ever shipped a Windows build, so nothing has exercised
+  # the download-URL construction, tar.gz extraction (vs. Windows' zip), or
+  # chmod +x path. Isolated from the `check` job on purpose: this needs the
+  # *real* resources/runtime content, and a failure here is a different
+  # question ("does the download/extract logic work on this OS") than a
+  # cargo check failure ("does the Rust code compile"). Windows isn't in
+  # this matrix — its fetch-node.mjs path is exactly what every existing
+  # release build already runs.
+  fetch-node:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - run: node scripts/fetch-node.mjs
+      - name: Verify the fetched binary actually runs
+        shell: bash
+        run: |
+          out="src-tauri/resources/runtime/node"
+          test -x "$out" || { echo "::error::$out missing or not executable"; exit 1; }
+          "$out" --version
