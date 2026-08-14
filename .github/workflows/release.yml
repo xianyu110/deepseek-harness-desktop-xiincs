@@ -55,3 +55,81 @@ jobs:
             --repo ${{ github.repository }} `
             --draft `
             --title "DeepSeek Harness Desktop ${{ github.ref_name }}"
+
+  # macOS/Linux artifacts, added onto the same draft release the Windows job
+  # above creates (hence `needs: release` — these jobs upload into an
+  # existing release rather than creating their own). Deliberately NOT
+  # wired into latest.json/the Tauri auto-updater: that mechanism verifies
+  # a signature against the pubkey in tauri.conf.json, and there is no
+  # Apple Developer account here to produce a real one for macOS — these
+  # builds are unsigned and unnotarized, download-only, same as every other
+  # unofficial dsh desktop wrapper's current macOS builds (see ROADMAP.md's
+  # competitor survey). Users get the double-click-blocked-by-Gatekeeper /
+  # right-click-Open-Anyway experience until real Apple/Linux signing
+  # infrastructure exists — that's a real UX cost being accepted here, not
+  # an oversight.
+  #
+  # `--bundles <fmt>` is a per-invocation CLI override, not a
+  # tauri.conf.json change: Tauri errors (not silently skips) on a bundle
+  # target invalid for the current host, so the Windows job's `targets:
+  # ["nsis"]` in tauri.conf.json stays untouched and this can't affect it.
+  macos-release:
+    needs: release
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - uses: dtolnay/rust-toolchain@stable
+      - run: npm install
+      - run: npm run check:dsh-version
+      - run: node scripts/fetch-node.mjs
+      - run: node scripts/prepare-runtime.mjs
+      - run: npx tauri build --bundles dmg
+      - name: Upload the dmg onto the existing draft release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          dmg=$(ls src-tauri/target/release/bundle/dmg/*.dmg)
+          gh release upload "${{ github.ref_name }}" "$dmg" \
+            --repo ${{ github.repository }} \
+            --clobber
+
+  linux-release:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - uses: dtolnay/rust-toolchain@stable
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev
+      - run: npm install
+      - run: npm run check:dsh-version
+      - run: node scripts/fetch-node.mjs
+      - run: node scripts/prepare-runtime.mjs
+      # continue-on-error: tauri.conf.json's updater pubkey makes a
+      # successful deb bundle still attempt a signed updater artifact
+      # afterward, which fails without TAURI_SIGNING_PRIVATE_KEY — this job
+      # deliberately doesn't set it, matching macOS's unsigned status above.
+      # Verified in CI (this session): the .deb itself is already written
+      # to disk before that later, unrelated step fails.
+      - run: npx tauri build --bundles deb
+        continue-on-error: true
+      - name: Upload the deb onto the existing draft release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          deb=$(ls "src-tauri/target/release/bundle/deb/"*.deb)
+          test -f "$deb" || { echo "::error::no deb artifact produced"; exit 1; }
+          gh release upload "${{ github.ref_name }}" "$deb" \
+            --repo ${{ github.repository }} \
+            --clobber
