@@ -14,10 +14,20 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use tauri::{AppHandle, Manager, State, WindowEvent};
+use tauri::menu::CheckMenuItem;
+use tauri::{AppHandle, Manager, State, WindowEvent, Wry};
+use tauri_plugin_autostart::ManagerExt as _;
+use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt as _, Modifiers, Shortcut, ShortcutState};
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_updater::UpdaterExt;
+
+/// Ctrl+Alt+D (Cmd+Alt+D on macOS) — chosen to avoid the much more commonly
+/// bound Ctrl+Space (IME switching) and Alt+Space (Windows' own system
+/// menu). Summons the window from anywhere, same as a tray left-click.
+fn global_show_shortcut() -> Shortcut {
+    Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyD)
+}
 
 use server::{DshServer, ServerStatus};
 
@@ -25,6 +35,10 @@ pub struct AppState {
     pub server: Arc<Mutex<DshServer>>,
     /// Whether the one-time "minimized to tray" notice has fired this run.
     hide_notice_shown: AtomicBool,
+    /// The tray's "开机自动启动" checkbox — kept here so
+    /// `MENU_TOGGLE_AUTOSTART` can sync its visual state after toggling
+    /// (clicking a `CheckMenuItem` doesn't flip its own display automatically).
+    autostart_item: CheckMenuItem<Wry>,
 }
 
 // ── commands (called only from the local boot page) ─────────────────────────
@@ -238,6 +252,17 @@ fn handle_menu_action(app: &AppHandle, id: &str) {
             let _ = app.opener().reveal_item_in_dir(&home);
         }
         menu::MENU_SHOW_WINDOW => show_main_window(app),
+        menu::MENU_TOGGLE_AUTOSTART => {
+            let autolaunch = app.autolaunch();
+            let now_enabled = autolaunch.is_enabled().unwrap_or(false);
+            let result = if now_enabled { autolaunch.disable() } else { autolaunch.enable() };
+            match result {
+                Ok(()) => {
+                    let _ = state.autostart_item.set_checked(!now_enabled);
+                }
+                Err(e) => eprintln!("[dsh-desktop] failed to toggle autostart: {e}"),
+            }
+        }
         menu::MENU_QUIT => {
             // stop() is a safe no-op in attach mode (pid stays None there),
             // so this only tears down a server we actually spawned.
@@ -263,10 +288,19 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .manage(AppState {
-            server: Arc::new(Mutex::new(DshServer::default())),
-            hide_notice_shown: AtomicBool::new(false),
-        })
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, shortcut, event| {
+                    if event.state == ShortcutState::Pressed && *shortcut == global_show_shortcut() {
+                        show_main_window(app);
+                    }
+                })
+                .build(),
+        )
         .invoke_handler(tauri::generate_handler![
             get_status,
             get_info,
@@ -287,11 +321,16 @@ pub fn run() {
                 server::init_log_file(log_dir.join("desktop.log"));
             }
 
+            // Built directly rather than via `app.state()` — AppState isn't
+            // `manage()`d until below, once `build_tray` has handed back the
+            // autostart checkbox it needs to be constructed with.
+            let srv = Arc::new(Mutex::new(DshServer::default()));
+
             // Remember the local boot page URL so we can navigate back to it
             // when the server stops unexpectedly.
             if let Some(win) = app.get_webview_window("main") {
                 if let Ok(url) = win.url() {
-                    app.state::<AppState>().server.lock().unwrap().boot_url = Some(url.to_string());
+                    srv.lock().unwrap().boot_url = Some(url.to_string());
                 }
                 disable_context_menu(&win);
                 disable_zoom_control(&win);
@@ -307,10 +346,22 @@ pub fn run() {
             // only set it on macOS.
             #[cfg(target_os = "macos")]
             app.set_menu(menu::build_menu(&handle)?)?;
-            menu::build_tray(&handle, handle_menu_action)?;
+            let autostart_item = menu::build_tray(&handle, handle_menu_action)?;
+
+            // Best-effort: another app may already hold Ctrl+Alt+D. Not
+            // being able to summon the window by hotkey isn't worth failing
+            // startup over — the tray icon still works either way.
+            if let Err(e) = app.global_shortcut().register(global_show_shortcut()) {
+                eprintln!("[dsh-desktop] failed to register global shortcut: {e}");
+            }
+
+            app.manage(AppState {
+                server: srv.clone(),
+                hide_notice_shown: AtomicBool::new(false),
+                autostart_item,
+            });
 
             // Auto-start the harness server shortly after the window appears.
-            let srv = app.state::<AppState>().server.clone();
             thread::spawn(move || {
                 thread::sleep(Duration::from_millis(300));
                 let _ = server::start(&handle, &srv);
