@@ -163,6 +163,60 @@ fn disable_context_menu(win: &tauri::WebviewWindow) {
 #[cfg(not(windows))]
 fn disable_context_menu(_win: &tauri::WebviewWindow) {}
 
+/// Disables Ctrl+scroll / Ctrl+±/0 page zoom entirely. Nothing in this app's
+/// own UI (boot page or tray) exposes a zoom control — it's purely the
+/// WebView2 accelerator-key default, which had no upper bound and no way
+/// back to 100% short of restarting the app (Ctrl+0 didn't reset it; a
+/// zoomed-out-to-nothing or zoomed-in-past-usable state persisted for the
+/// rest of the session). Same one-time-at-setup reasoning as
+/// `disable_context_menu`: this is a `CoreWebView2` setting, not a per-page
+/// one, so it holds across every later `navigate()` call.
+#[cfg(windows)]
+fn disable_zoom_control(win: &tauri::WebviewWindow) {
+    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Controller;
+    let _ = win.with_webview(|webview| {
+        let controller: ICoreWebView2Controller = webview.controller();
+        let result: windows::core::Result<()> = (|| unsafe {
+            let core = controller.CoreWebView2()?;
+            let settings = core.Settings()?;
+            settings.SetIsZoomControlEnabled(false)?;
+            Ok(())
+        })();
+        if let Err(e) = result {
+            eprintln!("[dsh-desktop] failed to disable WebView2 zoom control: {e}");
+        }
+    });
+}
+#[cfg(not(windows))]
+fn disable_zoom_control(_win: &tauri::WebviewWindow) {}
+
+/// Disables WebView2's built-in DevTools (F12 / Ctrl+Shift+I / right-click →
+/// 检查) in release builds only — debug builds keep it, since it's the
+/// normal way to debug the harness page during development. Release is a
+/// consumer-facing build: an unlabeled "检查" entry (now moot, since the
+/// context menu is off — but the keyboard shortcuts reach DevTools
+/// independently of the context menu) would only confuse a non-technical
+/// user who triggers it by accident, and leaving it reachable in a shipped
+/// build is needless extra attack surface for no product benefit here.
+#[cfg(all(windows, not(debug_assertions)))]
+fn disable_devtools(win: &tauri::WebviewWindow) {
+    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Controller;
+    let _ = win.with_webview(|webview| {
+        let controller: ICoreWebView2Controller = webview.controller();
+        let result: windows::core::Result<()> = (|| unsafe {
+            let core = controller.CoreWebView2()?;
+            let settings = core.Settings()?;
+            settings.SetAreDevToolsEnabled(false)?;
+            Ok(())
+        })();
+        if let Err(e) = result {
+            eprintln!("[dsh-desktop] failed to disable WebView2 DevTools: {e}");
+        }
+    });
+}
+#[cfg(not(all(windows, not(debug_assertions))))]
+fn disable_devtools(_win: &tauri::WebviewWindow) {}
+
 // ── menu / tray actions ──────────────────────────────────────────────────────
 
 fn handle_menu_action(app: &AppHandle, id: &str) {
@@ -240,6 +294,8 @@ pub fn run() {
                     app.state::<AppState>().server.lock().unwrap().boot_url = Some(url.to_string());
                 }
                 disable_context_menu(&win);
+                disable_zoom_control(&win);
+                disable_devtools(&win);
             }
 
             // A window/app menu set via `set_menu()` becomes the global
