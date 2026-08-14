@@ -1,4 +1,4 @@
-# deepseek-harness-desktop
+# Deepseek Harness Desktop (Tauri)
 
 中文 | [English](README.en.md)
 
@@ -14,12 +14,10 @@
 把内置的 WebView2 指向它——界面和数据都跟浏览器版完全一致（打开 `http://127.0.0.1:3080` 看到的同一个
 UI，`~/.dsh` 下的同一份数据），只是不用再开浏览器标签页。
 
-## 截图
-
 <p align="center">
-  <img src="docs/screenshots/app-boot.png" width="480" alt="启动页：dsh 服务启动中">
+  <img src="docs/screenshots/app-boot.png" alt="启动页：dsh 服务启动中">
   &nbsp;&nbsp;
-  <img src="docs/screenshots/app-running.png" width="480" alt="桌面版内运行的 DeepSeek Harness">
+  <img src="docs/screenshots/app-running.png" alt="桌面版内运行的 DeepSeek Harness">
 </p>
 
 ## 特性
