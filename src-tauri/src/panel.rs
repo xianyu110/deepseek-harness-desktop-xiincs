@@ -8,9 +8,13 @@
 //! surface) — the upstream project's own design notes place an in-app file
 //! preview "in the desktop shell's own design, not [the harness's]", so this
 //! module owns both independently rather than proxying anything dsh-side.
+//!
+//! It does read one piece of dsh's own state directly off disk, though: see
+//! `active_workspace_dir` below for why `DSH_DESKTOP_CWD` alone isn't enough
+//! to know what workspace the panel should show.
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde::Serialize;
@@ -101,6 +105,139 @@ pub struct GitEntry {
     pub status: GitStatus,
 }
 
+// ── active workspace ─────────────────────────────────────────────────────
+//
+// `DSH_DESKTOP_CWD` (`server::workspace_dir`) is only the directory the
+// shell happened to be launched with — a Windows Explorer "open with" arg,
+// or an env var. The harness has its own, separate, in-page "workspace"
+// concept (Settings → Choose workspace) that a user can register many of
+// and switch between freely, entirely inside the iframe, with no signal
+// reaching this shell (that's the whole point of the zero-IPC boundary).
+// Observed directly: those two can disagree — the shell panel kept showing
+// its launch directory while the harness UI had a completely different
+// workspace open.
+//
+// There is no live "the user is looking at session X right now" signal to
+// chase, on either side of that boundary — confirmed by direct network
+// inspection of a running instance (`read_network_requests` in the Browser
+// tab, not a guess): the harness loads every session's and workspace's full
+// metadata once at boot, then switching between *existing* sessions or
+// expanding a workspace group in the sidebar fires zero further HTTP
+// requests — it's pure client-side state. Corroborated from two more
+// angles: no client-side URL routing (`pushState`/`useNavigate`/router
+// exports all zero-hit across `packages/client` in
+// deepseek-ai/deepseek-harness) and no existing iframe↔parent postMessage
+// channel (the only "postMessage" hits in that repo are Web Worker
+// messaging and a native dialog IPC helper, unrelated to this). So "most
+// recently sent a message" (`session.list`'s `updatedAt`, below) is the
+// ceiling of precision available without either breaking the iframe's
+// origin isolation or the harness itself shipping a new integration hook —
+// not a shortcut taken here.
+//
+// Two sources, tried in order:
+//
+// 1. `POST {harness url}/api/session.list` — the canonical, always-current
+//    source, confirmed live: dsh's own internal unary RPC-over-HTTP wire
+//    format (`rpc_call` below), cross-checked against
+//    `packages/host/apiproxy/src/{fetch/handler.ts,api/sessions.schema.ts}`
+//    in deepseek-ai/deepseek-harness. Only reachable once the server is up.
+// 2. `<dsh home>/storages/workspace.json` — a plain JSON file dsh persists
+//    itself, covering the window before the server is reachable. Its
+//    `global.workspaceIds[0]` was verified by direct observation to match
+//    the on-screen active workspace at one point in time, but — unlike
+//    `session.list` — was later observed to lag ordinary session activity
+//    (its `updatedAt` sat minutes behind `session_projcache.json`'s during
+//    continued use), so it's kept only as the fallback for when there's no
+//    live server to ask, not trusted as the primary signal.
+//
+// Both are undocumented, internal-shaped payloads in a product whose own
+// README states "developer preview... THERE WILL BE COMPATIBILITY-BREAKING
+// CHANGES" — not a stable contract either way. Every step is `Option`-
+// chained so any mismatch (server unreachable, missing file, mid-write
+// partial read, renamed field, restructured schema) falls through cleanly,
+// and every caller falls back to `workspace_dir` — this must never be a
+// hard requirement.
+
+/// Extracts the most-recently-updated session's `cwd` from a `session.list`
+/// response's `items` array. Sessions without a `cwd` (e.g. subagent-origin
+/// ones, per the schema's `cwd?: string`) are skipped rather than winning a
+/// comparison against an absent timestamp.
+fn latest_session_cwd(items: &[serde_json::Value]) -> Option<PathBuf> {
+    items
+        .iter()
+        .filter_map(|item| {
+            let updated_at = item.get("updatedAt")?.as_i64()?;
+            let cwd = item.get("cwd")?.as_str()?;
+            Some((updated_at, cwd))
+        })
+        .max_by_key(|(updated_at, _)| *updated_at)
+        .map(|(_, cwd)| PathBuf::from(cwd))
+}
+
+/// dsh's internal unary RPC-over-HTTP wire format: POST a
+/// `{type: "client-request", rpcId, method, payload: {}}` envelope to
+/// `{base_url}/api/<method>`, expect back `{type: "server-response", rpcId,
+/// result: {ok: true, value} | {ok: false, error}}`. `rpcId` doesn't need
+/// real uniqueness here: exactly one request is ever in flight on this
+/// connection, nothing correlates concurrent replies against it.
+fn rpc_call(base_url: &str, method: &str) -> Option<serde_json::Value> {
+    let url = format!("{base_url}/api/{method}");
+    let body = serde_json::json!({
+        "type": "client-request",
+        "rpcId": "dsh-desktop-panel",
+        "method": method,
+        "payload": {},
+    });
+    let response: serde_json::Value = ureq::post(&url)
+        .config()
+        .timeout_global(Some(std::time::Duration::from_secs(3)))
+        .build()
+        .header("Content-Type", "application/json")
+        .send_json(&body)
+        .ok()?
+        .body_mut()
+        .read_json()
+        .ok()?;
+    let result = response.get("result")?;
+    if result.get("ok")?.as_bool()? {
+        result.get("value").cloned()
+    } else {
+        None
+    }
+}
+
+/// Core file-parsing logic, independent of `AppHandle` so it's directly
+/// testable against a synthetic (or real, captured) `workspace.json` — see
+/// `active_workspace_dir` for the entry point that supplies dsh's actual
+/// storage directory.
+fn parse_active_workspace(storages_dir: &Path) -> Option<PathBuf> {
+    let text = fs::read_to_string(storages_dir.join("workspace.json")).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let first_id = json.get("global")?.get("workspaceIds")?.as_array()?.first()?.as_str()?;
+    let path = json.get("tables")?.get("workspaces")?.get(first_id)?.get("path")?.as_str()?;
+    Some(PathBuf::from(path))
+}
+
+/// The harness's own currently-active workspace, when resolvable — see the
+/// module-level note above.
+pub fn active_workspace_dir(app: &tauri::AppHandle, server: &crate::server::Shared) -> Option<PathBuf> {
+    if let Some(url) = crate::server::running_url(server) {
+        if let Some(items) = rpc_call(&url, "session.list").and_then(|v| v.get("items")?.as_array().cloned()) {
+            if let Some(cwd) = latest_session_cwd(&items) {
+                return Some(cwd);
+            }
+        }
+    }
+    parse_active_workspace(&crate::server::dsh_home_dir(app).join("storages"))
+}
+
+/// What the panel should actually show: the harness's active workspace when
+/// resolvable, else the directory this shell was launched with/spawns the
+/// server in.
+pub fn effective_workspace_dir(app: &tauri::AppHandle, server: &crate::server::Shared) -> PathBuf {
+    active_workspace_dir(app, server).unwrap_or_else(|| crate::server::workspace_dir(app))
+}
+
 /// Runs `git status` in `cwd` and returns per-path status. Returns an empty
 /// list — not an error — when `cwd` isn't a git repository, or `git` isn't
 /// on PATH: the file tree above must stay usable either way, git status
@@ -159,6 +296,121 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    // Trimmed from a real, captured `POST /api/session.list` response body
+    // (read live off a running instance's Network tab; irrelevant
+    // `projections`/`agentPreset`/etc fields dropped since this parser only
+    // reads `updatedAt`/`cwd`) — three sessions across two workspaces, the
+    // middle one most recently updated despite not being listed last.
+    fn real_session_list_items() -> Vec<serde_json::Value> {
+        serde_json::from_str(
+            r#"[
+              {"sessionId": "session-e5e407e6", "updatedAt": 1786774994999, "cwd": "E:\\Project202608\\ExampleProject001"},
+              {"sessionId": "session-0f2b0cdf", "updatedAt": 1786775697190, "cwd": "E:\\Project202608\\ExampleProject001"},
+              {"sessionId": "session-2390bcfc", "updatedAt": 1786733386399, "cwd": "E:\\Project202608\\HappyTime"}
+            ]"#,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn latest_session_cwd_picks_the_max_updated_at_not_list_order() {
+        let items = real_session_list_items();
+        assert_eq!(
+            latest_session_cwd(&items),
+            Some(PathBuf::from(r"E:\Project202608\ExampleProject001"))
+        );
+    }
+
+    #[test]
+    fn latest_session_cwd_skips_entries_without_a_cwd() {
+        let items: Vec<serde_json::Value> = serde_json::from_str(
+            r#"[
+              {"sessionId": "session-subagent", "updatedAt": 9999999999999},
+              {"sessionId": "session-real", "updatedAt": 1, "cwd": "E:\\only\\real\\one"}
+            ]"#,
+        )
+        .unwrap();
+        assert_eq!(latest_session_cwd(&items), Some(PathBuf::from(r"E:\only\real\one")));
+    }
+
+    #[test]
+    fn latest_session_cwd_of_empty_list_is_none() {
+        assert_eq!(latest_session_cwd(&[]), None);
+    }
+
+    // Trimmed from a real, captured `~/.dsh/storages/workspace.json` (seven
+    // registered workspaces; `sessionIds`/timestamps/session-scoped data
+    // dropped since this parser never reads them) — real field names and
+    // real nesting, not a hand-typed guess at the shape.
+    const REAL_WORKSPACE_JSON: &str = r#"{
+      "unit": { "name": "workspace", "version": 2 },
+      "global": {
+        "initialized": true,
+        "workspaceIds": [
+          "bf8d8e2c-1049-4f40-bac4-f6ffe614aa59",
+          "13d72047-972b-42cf-98e3-1c3605728319",
+          "1c98bf74-32e0-4ad5-b0c0-66906a4778a4"
+        ],
+        "archivedSessionIds": []
+      },
+      "tables": {
+        "workspaces": {
+          "1c98bf74-32e0-4ad5-b0c0-66906a4778a4": {
+            "path": "E:\\Project202608\\dsh-desktop",
+            "title": "dsh-desktop"
+          },
+          "13d72047-972b-42cf-98e3-1c3605728319": {
+            "path": "E:\\Project202608\\HappyTime",
+            "title": "HappyTime"
+          },
+          "bf8d8e2c-1049-4f40-bac4-f6ffe614aa59": {
+            "path": "E:\\Project202608\\ExampleProject001",
+            "title": "ExampleProject001"
+          }
+        }
+      }
+    }"#;
+
+    #[test]
+    fn parses_the_first_workspace_ids_entry_from_a_real_captured_file() {
+        let dir = scratch_dir("workspace-json");
+        fs::write(dir.join("workspace.json"), REAL_WORKSPACE_JSON).unwrap();
+
+        assert_eq!(
+            parse_active_workspace(&dir),
+            Some(PathBuf::from(r"E:\Project202608\ExampleProject001"))
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn missing_workspace_json_returns_none_not_an_error() {
+        let dir = scratch_dir("workspace-json-missing");
+        assert_eq!(parse_active_workspace(&dir), None);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn malformed_workspace_json_returns_none_not_a_panic() {
+        let dir = scratch_dir("workspace-json-malformed");
+        fs::write(dir.join("workspace.json"), "{ this is not valid json").unwrap();
+        assert_eq!(parse_active_workspace(&dir), None);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn empty_workspace_ids_returns_none() {
+        let dir = scratch_dir("workspace-json-empty");
+        fs::write(
+            dir.join("workspace.json"),
+            r#"{"global": {"workspaceIds": []}, "tables": {"workspaces": {}}}"#,
+        )
+        .unwrap();
+        assert_eq!(parse_active_workspace(&dir), None);
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

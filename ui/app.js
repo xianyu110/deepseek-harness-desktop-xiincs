@@ -151,6 +151,19 @@ function renderTreeNode(entry, gitMap, container) {
 }
 
 async function refreshPanel() {
+  // Re-resolved every refresh, not just once at startup — the harness has
+  // its own in-page workspace switcher (Settings → 选择工作区), entirely
+  // inside the iframe with no signal reaching this shell directly, so this
+  // can change independently of anything the shell itself observes. See
+  // get_active_workspace's Rust-side doc comment.
+  try {
+    const workspace = await invoke("get_active_workspace");
+    els.panelWorkspaceName.textContent = workspace;
+    els.panelWorkspaceName.title = workspace;
+  } catch {
+    /* label is cosmetic; tree/git status below still attempt to load */
+  }
+
   try {
     const [tree, gitEntries] = await Promise.all([invoke("get_workspace_tree"), invoke("get_git_status")]);
     const gitMap = new Map(gitEntries.map((e) => [e.path, e.status]));
@@ -187,10 +200,6 @@ async function init() {
     if (info.nodePath) bits.push(`Node ${info.nodePath}`);
     if (info.dshHome) bits.push(`数据目录 ${info.dshHome}`);
     els.footer.textContent = bits.join(" · ");
-    if (info.workspaceDir) {
-      els.panelWorkspaceName.textContent = info.workspaceDir;
-      els.panelWorkspaceName.title = info.workspaceDir;
-    }
   } catch {
     /* footer is cosmetic */
   }

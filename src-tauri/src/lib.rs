@@ -90,15 +90,25 @@ fn stop_server(app: AppHandle, state: State<'_, AppState>) -> Result<(), String>
 }
 
 #[tauri::command]
-fn get_workspace_tree(app: AppHandle) -> Vec<panel::TreeEntry> {
-    let root = server::workspace_dir(&app);
+fn get_workspace_tree(app: AppHandle, state: State<'_, AppState>) -> Vec<panel::TreeEntry> {
+    let root = panel::effective_workspace_dir(&app, &state.server);
     panel::list_workspace_tree(&root)
 }
 
 #[tauri::command]
-fn get_git_status(app: AppHandle) -> Vec<panel::GitEntry> {
-    let root = server::workspace_dir(&app);
+fn get_git_status(app: AppHandle, state: State<'_, AppState>) -> Vec<panel::GitEntry> {
+    let root = panel::effective_workspace_dir(&app, &state.server);
     panel::git_status(&root)
+}
+
+/// The panel's workspace-name label. Re-resolved on every panel refresh
+/// (not cached at startup like `get_info`'s other fields) since the
+/// harness's own in-page workspace selection — entirely inside the iframe,
+/// with no signal reaching this shell directly — can change independently
+/// of anything else this shell observes. See `panel::active_workspace_dir`.
+#[tauri::command]
+fn get_active_workspace(app: AppHandle, state: State<'_, AppState>) -> String {
+    panel::effective_workspace_dir(&app, &state.server).to_string_lossy().into_owned()
 }
 
 #[tauri::command]
@@ -428,7 +438,8 @@ pub fn run() {
             check_for_update,
             install_update,
             get_workspace_tree,
-            get_git_status
+            get_git_status,
+            get_active_workspace
         ])
         .setup(|app| {
             let handle = app.handle().clone();

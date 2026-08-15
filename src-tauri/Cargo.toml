@@ -5,7 +5,9 @@ description = "DeepSeek Harness desktop app — a Tauri wrapper that hosts the d
 authors = ["dsh-desktop contributors"]
 license = "MIT"
 edition = "2021"
-rust-version = "1.77.2"
+# Raised from 1.77.2: ureq 3.x's own declared MSRV is 1.85 — see the
+# `active_workspace_dir` HTTP lookup in panel.rs for why it was added.
+rust-version = "1.85"
 
 [lib]
 name = "dsh_desktop_lib"
@@ -24,6 +26,11 @@ tauri-plugin-autostart = "2"
 tauri-plugin-global-shortcut = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Plain http:// localhost only (dsh's own API) — TLS is never needed here,
+# so default-features off skips pulling in rustls+ring. `json` only turns on
+# ureq's own send_json/read_json paths against the serde/serde_json already
+# listed above; it adds no new transitive dependency.
+ureq = { version = "3", default-features = false, features = ["json"] }
 
 [target.'cfg(windows)'.dependencies]
 # Raw WebView2 settings access (disabling the default context menu) —

@@ -945,7 +945,6 @@ pub fn info(app: &AppHandle, server: &Shared) -> serde_json::Value {
         "binPath": bin.unwrap_or_default(),
         "dshHome": dsh_home_dir(app).to_string_lossy(),
         "runtimeDir": runtime_dir(app).to_string_lossy(),
-        "workspaceDir": workspace_dir(app).to_string_lossy(),
     })
 }
 
