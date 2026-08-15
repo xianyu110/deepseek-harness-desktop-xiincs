@@ -10,6 +10,7 @@ mod menu;
 mod panel;
 mod server;
 
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -89,26 +90,50 @@ fn stop_server(app: AppHandle, state: State<'_, AppState>) -> Result<(), String>
     Ok(())
 }
 
+/// `override_path`: the client's manual-picker choice, when it has one —
+/// see the "known workspaces" section in `panel.rs`. `None`/absent falls
+/// back to auto-inference, same as before that picker existed.
 #[tauri::command]
-fn get_workspace_tree(app: AppHandle, state: State<'_, AppState>) -> Vec<panel::TreeEntry> {
-    let root = panel::effective_workspace_dir(&app, &state.server);
+fn get_workspace_tree(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    override_path: Option<String>,
+) -> Vec<panel::TreeEntry> {
+    let root = override_path
+        .map(PathBuf::from)
+        .unwrap_or_else(|| panel::effective_workspace_dir(&app, &state.server));
     panel::list_workspace_tree(&root)
 }
 
 #[tauri::command]
-fn get_git_status(app: AppHandle, state: State<'_, AppState>) -> Vec<panel::GitEntry> {
-    let root = panel::effective_workspace_dir(&app, &state.server);
+fn get_git_status(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    override_path: Option<String>,
+) -> Vec<panel::GitEntry> {
+    let root = override_path
+        .map(PathBuf::from)
+        .unwrap_or_else(|| panel::effective_workspace_dir(&app, &state.server));
     panel::git_status(&root)
 }
 
-/// The panel's workspace-name label. Re-resolved on every panel refresh
-/// (not cached at startup like `get_info`'s other fields) since the
-/// harness's own in-page workspace selection — entirely inside the iframe,
-/// with no signal reaching this shell directly — can change independently
-/// of anything else this shell observes. See `panel::active_workspace_dir`.
+/// The panel's workspace-name label when in auto mode. Re-resolved on every
+/// panel refresh (not cached at startup like `get_info`'s other fields)
+/// since the harness's own in-page workspace selection — entirely inside
+/// the iframe, with no signal reaching this shell directly — can change
+/// independently of anything else this shell observes. See
+/// `panel::active_workspace_dir`. Not called at all once the client has a
+/// manual-picker choice locked in — it already knows what to show.
 #[tauri::command]
 fn get_active_workspace(app: AppHandle, state: State<'_, AppState>) -> String {
     panel::effective_workspace_dir(&app, &state.server).to_string_lossy().into_owned()
+}
+
+/// Every workspace dsh currently knows about — populates the panel's manual
+/// picker. See the "known workspaces" section in `panel.rs`.
+#[tauri::command]
+fn get_known_workspaces(app: AppHandle, state: State<'_, AppState>) -> Vec<panel::WorkspaceOption> {
+    panel::known_workspaces(&app, &state.server)
 }
 
 #[tauri::command]
@@ -439,7 +464,8 @@ pub fn run() {
             install_update,
             get_workspace_tree,
             get_git_status,
-            get_active_workspace
+            get_active_workspace,
+            get_known_workspaces
         ])
         .setup(|app| {
             let handle = app.handle().clone();

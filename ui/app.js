@@ -26,7 +26,7 @@ const els = {
   btnUpdateDismiss: document.getElementById("btn-update-dismiss"),
   providerTip: document.getElementById("provider-tip"),
   btnProviderTipDismiss: document.getElementById("btn-provider-tip-dismiss"),
-  panelWorkspaceName: document.getElementById("panel-workspace-name"),
+  panelWorkspaceSelect: document.getElementById("panel-workspace-select"),
   panelTree: document.getElementById("panel-tree"),
   btnPanelRefresh: document.getElementById("btn-panel-refresh"),
 };
@@ -127,6 +127,20 @@ const GIT_STATUS_CLASS = {
   untracked: "git-untracked",
 };
 
+// "" is the sentinel for "auto-follow" in the <select> — never a real
+// filesystem path, so it can't collide with an actual workspace's value.
+const AUTO_OPTION_VALUE = "";
+const LOCKED_WORKSPACE_KEY = "dsh-desktop-locked-workspace";
+
+// null = auto-follow (get_active_workspace's live, best-effort inference —
+// see its Rust-side doc comment for why that's a real ceiling, not a
+// shortcut); a string is the user's own pick from the panel's picker,
+// passed straight through as get_workspace_tree/get_git_status's
+// overridePath. Persisted so an explicit choice survives a restart, the
+// same pattern PROVIDER_TIP_DISMISSED_KEY already uses for a one-time
+// user decision.
+let lockedWorkspace = localStorage.getItem(LOCKED_WORKSPACE_KEY) || null;
+
 function renderTreeNode(entry, gitMap, container) {
   const row = document.createElement("div");
   row.className = "tree-row" + (entry.isDir ? " tree-dir" : " tree-file");
@@ -150,22 +164,65 @@ function renderTreeNode(entry, gitMap, container) {
   }
 }
 
-async function refreshPanel() {
-  // Re-resolved every refresh, not just once at startup — the harness has
-  // its own in-page workspace switcher (Settings → 选择工作区), entirely
-  // inside the iframe with no signal reaching this shell directly, so this
-  // can change independently of anything the shell itself observes. See
-  // get_active_workspace's Rust-side doc comment.
-  try {
-    const workspace = await invoke("get_active_workspace");
-    els.panelWorkspaceName.textContent = workspace;
-    els.panelWorkspaceName.title = workspace;
-  } catch {
-    /* label is cosmetic; tree/git status below still attempt to load */
+// Rebuilds the picker's <option>s from the known-workspaces list plus the
+// auto-follow sentinel (whose label carries the live-resolved name, when
+// there is one, so auto mode stays informative without a second element).
+function renderWorkspaceOptions(knownWorkspaces, autoLabel) {
+  const select = els.panelWorkspaceSelect;
+  select.replaceChildren();
+
+  const autoOption = document.createElement("option");
+  autoOption.value = AUTO_OPTION_VALUE;
+  autoOption.textContent = autoLabel ? `自动跟随（${autoLabel}）` : "自动跟随当前会话";
+  select.appendChild(autoOption);
+
+  let lockedValueFound = lockedWorkspace === null;
+  for (const ws of knownWorkspaces) {
+    const option = document.createElement("option");
+    option.value = ws.path;
+    option.textContent = ws.title;
+    option.title = ws.path;
+    select.appendChild(option);
+    if (ws.path === lockedWorkspace) lockedValueFound = true;
+  }
+  // The locked path was picked from a list that has since changed (e.g. the
+  // workspace was removed/archived in the harness) — keep showing it rather
+  // than silently falling back, since the directory on disk hasn't gone
+  // anywhere; only the picker's own option list is stale.
+  if (!lockedValueFound) {
+    const staleOption = document.createElement("option");
+    staleOption.value = lockedWorkspace;
+    staleOption.textContent = lockedWorkspace;
+    select.appendChild(staleOption);
   }
 
+  select.value = lockedWorkspace ?? AUTO_OPTION_VALUE;
+}
+
+async function refreshPanel() {
+  const knownWorkspacesPromise = invoke("get_known_workspaces").catch(() => []);
+
+  // Skipped entirely once the user has a manual pick locked in — there's
+  // nothing left to infer. Otherwise re-resolved every refresh, not just
+  // once at startup: the harness's own in-page workspace switcher, entirely
+  // inside the iframe with no signal reaching this shell directly, can
+  // change independently of anything else this shell observes.
+  let autoLabel = null;
+  if (lockedWorkspace === null) {
+    try {
+      autoLabel = await invoke("get_active_workspace");
+    } catch {
+      /* falls through with autoLabel null; the option keeps its static text */
+    }
+  }
+  renderWorkspaceOptions(await knownWorkspacesPromise, autoLabel);
+
   try {
-    const [tree, gitEntries] = await Promise.all([invoke("get_workspace_tree"), invoke("get_git_status")]);
+    const treeArgs = { overridePath: lockedWorkspace };
+    const [tree, gitEntries] = await Promise.all([
+      invoke("get_workspace_tree", treeArgs),
+      invoke("get_git_status", treeArgs),
+    ]);
     const gitMap = new Map(gitEntries.map((e) => [e.path, e.status]));
     els.panelTree.replaceChildren();
     if (tree.length === 0) {
@@ -229,6 +286,16 @@ async function init() {
   els.btnLogsStarting.addEventListener("click", toggleLogsStarting);
   els.btnOpenBrowser.addEventListener("click", () => invoke("open_in_browser"));
   els.btnPanelRefresh.addEventListener("click", refreshPanel);
+  els.panelWorkspaceSelect.addEventListener("change", () => {
+    const value = els.panelWorkspaceSelect.value;
+    lockedWorkspace = value === AUTO_OPTION_VALUE ? null : value;
+    if (lockedWorkspace === null) {
+      localStorage.removeItem(LOCKED_WORKSPACE_KEY);
+    } else {
+      localStorage.setItem(LOCKED_WORKSPACE_KEY, lockedWorkspace);
+    }
+    refreshPanel();
+  });
 
   els.btnUpdateDismiss.addEventListener("click", () => {
     els.updateBanner.classList.add("hidden");

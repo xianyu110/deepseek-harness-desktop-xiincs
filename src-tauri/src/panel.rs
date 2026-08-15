@@ -238,6 +238,69 @@ pub fn effective_workspace_dir(app: &tauri::AppHandle, server: &crate::server::S
     active_workspace_dir(app, server).unwrap_or_else(|| crate::server::workspace_dir(app))
 }
 
+// ── known workspaces (manual picker) ─────────────────────────────────────
+//
+// The auto-inference above has a real, principled ceiling (see the note
+// above it): nothing observes a pure "switched which existing session I'm
+// looking at" action, only "sent a message in it". For a user who wants the
+// panel pinned to a specific project regardless of that, the client
+// (`ui/app.js`) offers a manual picker populated from this list and passes
+// its choice back to `get_workspace_tree`/`get_git_status` as an explicit
+// override — see those commands in `lib.rs`. This function only supplies
+// the *options*; which one is currently selected is UI state the client
+// owns and persists itself, not something Rust tracks.
+
+#[derive(Serialize, Clone)]
+pub struct WorkspaceOption {
+    pub path: String,
+    pub title: String,
+}
+
+fn parse_workspace_option(item: &serde_json::Value) -> Option<WorkspaceOption> {
+    let path = item.get("path")?.as_str()?.to_string();
+    let title = item.get("title")?.as_str()?.to_string();
+    Some(WorkspaceOption { path, title })
+}
+
+/// Every workspace dsh currently knows about, `session.list`-API first
+/// (`workspace.list`'s `items` are already in the server's own order — the
+/// live source `active_workspace_dir` also prefers), falling back to the
+/// persisted file when the server isn't reachable.
+pub fn known_workspaces(app: &tauri::AppHandle, server: &crate::server::Shared) -> Vec<WorkspaceOption> {
+    if let Some(url) = crate::server::running_url(server) {
+        if let Some(items) = rpc_call(&url, "workspace.list").and_then(|v| v.get("items")?.as_array().cloned()) {
+            let options: Vec<WorkspaceOption> = items.iter().filter_map(parse_workspace_option).collect();
+            if !options.is_empty() {
+                return options;
+            }
+        }
+    }
+    file_workspace_options(&crate::server::dsh_home_dir(app).join("storages"))
+}
+
+/// Core file-parsing logic, independent of `AppHandle` — mirrors
+/// `parse_active_workspace`'s fallback but returns every entry (in
+/// `workspaceIds` order) rather than just the first.
+fn file_workspace_options(storages_dir: &Path) -> Vec<WorkspaceOption> {
+    let Ok(text) = fs::read_to_string(storages_dir.join("workspace.json")) else {
+        return Vec::new();
+    };
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return Vec::new();
+    };
+    let Some(ids) = json.get("global").and_then(|g| g.get("workspaceIds")).and_then(|w| w.as_array()) else {
+        return Vec::new();
+    };
+    let Some(workspaces) = json.get("tables").and_then(|t| t.get("workspaces")) else {
+        return Vec::new();
+    };
+    ids.iter()
+        .filter_map(|id| id.as_str())
+        .filter_map(|id| workspaces.get(id))
+        .filter_map(parse_workspace_option)
+        .collect()
+}
+
 /// Runs `git status` in `cwd` and returns per-path status. Returns an empty
 /// list — not an error — when `cwd` isn't a git repository, or `git` isn't
 /// on PATH: the file tree above must stay usable either way, git status
@@ -383,6 +446,28 @@ mod tests {
             Some(PathBuf::from(r"E:\Project202608\ExampleProject001"))
         );
 
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn file_workspace_options_returns_all_entries_in_workspace_ids_order() {
+        let dir = scratch_dir("workspace-json-options");
+        fs::write(dir.join("workspace.json"), REAL_WORKSPACE_JSON).unwrap();
+
+        let options = file_workspace_options(&dir);
+        let titles: Vec<_> = options.iter().map(|o| o.title.as_str()).collect();
+        // Matches workspaceIds order in REAL_WORKSPACE_JSON, not tables.workspaces'
+        // (arbitrary, UUID-keyed) object-key order.
+        assert_eq!(titles, vec!["ExampleProject001", "HappyTime", "dsh-desktop"]);
+        assert_eq!(options[0].path, r"E:\Project202608\ExampleProject001");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn file_workspace_options_on_missing_file_is_empty() {
+        let dir = scratch_dir("workspace-json-options-missing");
+        assert!(file_workspace_options(&dir).is_empty());
         let _ = fs::remove_dir_all(&dir);
     }
 
