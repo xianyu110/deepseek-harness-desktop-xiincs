@@ -66,34 +66,29 @@ body {
   overflow: hidden;
 }
 
-/* ── panel: persistent brand anchor + file/git tree ── */
+/* ── main column: toolbar + harness content, everything left of the dock ── */
 
-#panel {
-  width: 280px;
-  flex-shrink: 0;
-  background: var(--sidebar-bg);
-  border-right: 1px solid var(--card-border);
+#main-column {
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  transition: width 0.15s ease;
 }
 
-/* Widens to fit the tree (narrowed) beside the preview, rather than the
-   preview competing with the tree for the original 280px. */
-#panel.with-preview {
-  width: 640px;
-}
+/* ── toolbar: brand anchor + right-aligned dock trigger buttons ── */
 
-#panel-header {
+#toolbar {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 16px 10px;
-  flex-shrink: 0;
+  padding: 10px 14px;
+  background: var(--sidebar-bg);
+  border-bottom: 1px solid var(--card-border);
 }
 
-.panel-brand {
+.toolbar-brand {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -103,44 +98,179 @@ body {
   overflow: hidden;
 }
 
-.panel-brand img {
+.toolbar-brand img {
   width: 16px;
   height: 16px;
   flex-shrink: 0;
 }
 
-.panel-brand span {
+.toolbar-brand span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-#btn-panel-refresh {
-  background: transparent;
-  border: none;
-  padding: 4px 8px;
-  border-radius: 999px;
-  cursor: pointer;
-  color: var(--muted);
-  font-size: 13px;
+#toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
   flex-shrink: 0;
 }
 
-#btn-panel-refresh:hover {
+.toolbar-btn {
+  background: transparent;
+  border: none;
+  padding: 6px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.toolbar-btn:hover {
+  background: var(--btn-hover-bg);
+}
+
+.toolbar-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.toolbar-btn:disabled:hover {
+  background: transparent;
+}
+
+/* The one wired-up button reflects #panel's open/closed state so it reads
+   as a toggle, not a one-shot action. */
+.toolbar-btn.active {
+  background: var(--accent-tint-bg);
+  color: var(--accent-tint-text);
+}
+
+/* ── dock: right-side panel, closed by default, holding independent cards ── */
+
+/* Width is set inline by ui/app.js (draggable, persisted) — see
+   applyPanelWidth() and #resize-panel-content below. This 380px is only the
+   very first paint's fallback, before that JS has run. No transition: a
+   live drag must track the pointer exactly, not lag behind an animation. */
+#panel {
+  width: 380px;
+  flex-shrink: 0;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Both the dock and its resize handle disappear together — a handle with
+   nothing to resize (dock closed) would be a dead hit target sitting in
+   the middle of the harness iframe. */
+#panel.hidden,
+#resize-panel-content.hidden {
+  display: none;
+}
+
+#panel-cards {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+/* Each card is visually self-contained (own border/radius/shadow) and
+   scrolls independently — deliberately not one shared tree-then-content
+   flex flow with a drag-adjustable split, so closing or resizing one
+   never affects the other's layout. */
+.dock-card {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: 14px;
+  box-shadow: var(--card-shadow);
+  overflow: hidden;
+}
+
+#card-files {
+  /* Grows to fill leftover space in #panel-cards when #card-file is
+     closed; once #card-file appears, #card-file's own max-height keeps
+     this from being squeezed to nothing. */
+  flex: 1;
+  min-height: 120px;
+}
+
+/* Collapsed via the card's own ⌃/⌄ button — hides everything but the
+   header, independent of #card-file's own close button. */
+#card-files.card-collapsed {
+  flex: 0 0 auto;
+  min-height: 0;
+}
+
+#card-files.card-collapsed > *:not(.dock-card-header) {
+  display: none;
+}
+
+#card-file {
+  flex: 0 0 auto;
+  max-height: 60%;
+}
+
+.dock-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--card-border);
+  flex-shrink: 0;
+}
+
+.dock-card-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.dock-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.dock-card-actions button {
+  background: transparent;
+  border: none;
+  padding: 3px 9px;
+  border-radius: 999px;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.dock-card-actions button:hover {
   background: var(--btn-hover-bg);
 }
 
 #panel-workspace-select {
-  margin: 0 16px 12px;
+  margin: 8px 10px;
   padding: 6px 10px;
   font-size: 11.5px;
   font-family: inherit;
   color: var(--text);
-  background: var(--card);
+  background: var(--sidebar-bg);
   border: 1px solid var(--card-border);
   border-radius: 8px;
   cursor: pointer;
-  max-width: calc(100% - 32px);
+  max-width: calc(100% - 20px);
 }
 
 #panel-workspace-select:hover {
@@ -152,23 +282,54 @@ body {
   outline-offset: 1px;
 }
 
-#panel-body {
-  flex: 1;
-  display: flex;
-  overflow: hidden;
-  min-height: 0;
-}
-
 #panel-tree {
   flex: 1;
   overflow-y: auto;
-  padding: 4px 8px;
+  padding: 4px 8px 10px;
   font-size: 12.5px;
   user-select: text;
+  min-height: 0;
 }
 
-#panel.with-preview #panel-tree {
-  flex: 0 0 250px;
+/* ── resize handle: draggable, persisted dock-vs-content split ── */
+
+/* A real 8px-wide flex item (not a thin line widened via a negative-margin
+   overlap into its neighbors) — #resize-panel-content sits beside the
+   harness <iframe>, and iframes are well known to intercept mouse events
+   independent of normal CSS z-index stacking, so a hit target that
+   overlaps into one at all risks the very first mousedown never reaching
+   this element's own listener. Genuinely owning its own flex space avoids
+   that ambiguity entirely; the ::after line just draws a thin 1px visual
+   centered within the real, wider, non-overlapping hit box. */
+.resize-handle {
+  flex-shrink: 0;
+  width: 8px;
+  cursor: col-resize;
+  background: transparent;
+  position: relative;
+}
+
+.resize-handle::after {
+  content: "";
+  position: absolute;
+  inset: 0 3.5px;
+  background: var(--card-border);
+}
+
+.resize-handle:hover::after,
+.resize-handle.dragging::after {
+  background: var(--accent);
+}
+
+/* A drag anywhere reaches past whatever the pointer happens to be over
+   (CodeMirror included) without fighting its own mouse handling — set for
+   the drag's duration by the mousedown handler in ui/app.js. */
+body.resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+body.resizing iframe {
+  pointer-events: none;
 }
 
 .panel-empty {
@@ -176,35 +337,9 @@ body {
   font-size: 12px;
 }
 
-/* ── file preview: hidden until #panel has .with-preview ── */
-
-#panel-preview {
-  display: none;
-  flex-direction: column;
-  flex: 1;
-  min-width: 0;
-  border-left: 1px solid var(--card-border);
-  background: var(--card);
-  overflow: hidden;
-}
-
-#panel.with-preview #panel-preview {
-  display: flex;
-}
-
-#panel-preview-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--card-border);
-  flex-shrink: 0;
-}
-
 #panel-preview-title-group {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 6px;
   overflow: hidden;
   min-width: 0;
@@ -224,13 +359,6 @@ body {
   font-size: 8px;
   line-height: 1;
   color: var(--accent);
-}
-
-#panel-preview-actions {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex-shrink: 0;
 }
 
 #btn-preview-close,
@@ -348,7 +476,7 @@ body {
 
 #content {
   flex: 1;
-  min-width: 0;
+  min-height: 0;
   position: relative;
   display: flex;
   align-items: center;
@@ -490,15 +618,6 @@ button:disabled {
   line-height: 1.5;
   color: var(--muted);
   white-space: pre-wrap;
-  user-select: text;
-}
-
-/* footer */
-#footer {
-  margin-top: 18px;
-  text-align: center;
-  color: var(--muted);
-  font-size: 11px;
   user-select: text;
 }
 

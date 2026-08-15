@@ -30,7 +30,11 @@ const els = {
   panelWorkspaceSelect: document.getElementById("panel-workspace-select"),
   panelTree: document.getElementById("panel-tree"),
   btnPanelRefresh: document.getElementById("btn-panel-refresh"),
-  panelPreview: document.getElementById("panel-preview"),
+  resizePanelContent: document.getElementById("resize-panel-content"),
+  btnToolbarFiles: document.getElementById("btn-toolbar-files"),
+  btnFilesCollapse: document.getElementById("btn-files-collapse"),
+  cardFiles: document.getElementById("card-files"),
+  cardFile: document.getElementById("card-file"),
   panelPreviewTitle: document.getElementById("panel-preview-title"),
   panelPreviewDirtyDot: document.getElementById("panel-preview-dirty-dot"),
   panelPreviewBody: document.getElementById("panel-preview-body"),
@@ -124,6 +128,82 @@ async function refresh() {
     show("error");
     els.errorMessage.textContent = `无法获取状态: ${err}`;
   }
+}
+
+// ── resizable dock width ────────────────────────────────────────────────
+//
+// One draggable, persisted split: the dock (#panel, now right-docked)
+// against #content (the harness iframe). Applies as an inline style (see
+// applyPanelWidth) rather than living in styles.css, since a CSS width
+// can't be end-user-adjustable without JS setting it somewhere; the
+// stylesheet keeps a single fallback default for the instant before this
+// script runs. The two dock cards (Files/File) no longer share a
+// drag-adjustable split between them — each sizes to its own content and
+// scrolls independently, so there's nothing left to resize inside #panel.
+
+const PANEL_WIDTH_KEY = "dsh-desktop-panel-width";
+const DEFAULT_PANEL_WIDTH = 380;
+// Never shrinks the dock below this — small enough to still show a few
+// characters of a filename or a code line, too small to accidentally
+// collapse it to nothing mid-drag.
+const MIN_PANEL_WIDTH = 240;
+// The dock may never claim more than this fraction of the window — #content
+// (the harness) staying visibly present matters more than an oversized dock.
+const MAX_PANEL_WIDTH_RATIO = 0.7;
+
+function loadStoredWidth(key, fallback) {
+  const n = parseInt(localStorage.getItem(key), 10);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+let panelWidth = loadStoredWidth(PANEL_WIDTH_KEY, DEFAULT_PANEL_WIDTH);
+
+function applyPanelWidth() {
+  els.panel.style.width = `${panelWidth}px`;
+}
+
+function initResizeHandle() {
+  els.resizePanelContent.addEventListener("mousedown", (downEvent) => {
+    downEvent.preventDefault();
+    els.resizePanelContent.classList.add("dragging");
+    document.body.classList.add("resizing");
+
+    // #panel is now the right-docked element, so its width is measured
+    // from the window's right edge inward, not directly from clientX (that
+    // reasoning only held when #panel started flush against the left edge).
+    const onMouseMove = (moveEvent) => {
+      const candidate = window.innerWidth - moveEvent.clientX;
+      const max = window.innerWidth * MAX_PANEL_WIDTH_RATIO;
+      panelWidth = Math.max(MIN_PANEL_WIDTH, Math.min(max, candidate));
+      applyPanelWidth();
+    };
+    const onMouseUp = () => {
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+      els.resizePanelContent.classList.remove("dragging");
+      document.body.classList.remove("resizing");
+      localStorage.setItem(PANEL_WIDTH_KEY, String(Math.round(panelWidth)));
+    };
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+  });
+}
+
+// ── dock open/closed ────────────────────────────────────────────────────
+//
+// Closed on every launch (not persisted) — the toolbar's 文件 button is a
+// deliberate opt-in each session, not a state to restore. Only the width
+// (once opened) is remembered, via panelWidth/PANEL_WIDTH_KEY above.
+
+function setDockOpen(open) {
+  els.panel.classList.toggle("hidden", !open);
+  els.resizePanelContent.classList.toggle("hidden", !open);
+  els.btnToolbarFiles.classList.toggle("active", open);
+  if (open) refreshPanel();
+}
+
+function toggleDock() {
+  setDockOpen(els.panel.classList.contains("hidden"));
 }
 
 // ── file/git panel ───────────────────────────────────────────────────────
@@ -390,7 +470,7 @@ function mountEditor(path, preview) {
 async function showPreview(path) {
   if (!confirmDiscardIfNeeded()) return;
   currentPreviewPath = path;
-  els.panel.classList.add("with-preview");
+  els.cardFile.classList.remove("hidden");
   els.panelPreviewTitle.textContent = path;
   els.panelPreviewTitle.title = path;
   destroyEditor();
@@ -435,7 +515,7 @@ function closePreview() {
   if (!confirmDiscardIfNeeded()) return;
   currentPreviewPath = null;
   destroyEditor();
-  els.panel.classList.remove("with-preview");
+  els.cardFile.classList.add("hidden");
   els.panelPreviewBody.replaceChildren();
 }
 
@@ -567,6 +647,9 @@ const PANEL_POLL_MS = 6000;
 // ── init ─────────────────────────────────────────────────────────────────
 
 async function init() {
+  applyPanelWidth();
+  initResizeHandle();
+
   try {
     const info = await invoke("get_info");
     const bits = [];
@@ -602,6 +685,14 @@ async function init() {
   els.btnLogs.addEventListener("click", toggleLogs);
   els.btnLogsStarting.addEventListener("click", toggleLogsStarting);
   els.btnOpenBrowser.addEventListener("click", () => invoke("open_in_browser"));
+  els.btnToolbarFiles.addEventListener("click", toggleDock);
+  // Collapses the Files card's tree/picker body without closing the whole
+  // dock — independent from #card-file's own close button, per the "each
+  // card scrolls/collapses on its own" design.
+  els.btnFilesCollapse.addEventListener("click", () => {
+    const collapsed = els.cardFiles.classList.toggle("card-collapsed");
+    els.btnFilesCollapse.textContent = collapsed ? "⌄" : "⌃";
+  });
   els.btnPanelRefresh.addEventListener("click", refreshPanel);
   els.panelWorkspaceSelect.addEventListener("change", () => {
     const value = els.panelWorkspaceSelect.value;
