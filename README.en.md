@@ -9,17 +9,26 @@
 [![Platform: Linux](https://img.shields.io/badge/platform-Linux-FCC624)](#)
 [![Built with Tauri 2](https://img.shields.io/badge/built%20with-Tauri%202-24C8DB)](https://v2.tauri.app/)
 
-A desktop app for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness), built with
-[Tauri 2](https://v2.tauri.app/). The Windows installer is signed and wired into auto-update;
-macOS (`.dmg`) and Linux (`.deb`) builds are also published with every release, but are
-**unsigned and unnotarized** (no Apple Developer account) — macOS needs a one-time manual
-allow in System Settings → Privacy & Security, Linux installs normally via `dpkg -i` or your
-package manager, and neither participates in auto-update — you'll need to download new
-versions manually.
+### A native desktop app for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) — **Tauri-based, 1/3 the installer size of the Electron alternative**
 
-It wraps the harness's own web server (`dsh web`) in a native window: the app spawns a local
-`dsh` server process, waits for it to be ready, and points an embedded WebView2 at it — the same
-UI you get by opening `http://127.0.0.1:3080` in a browser, with the same data under `~/.dsh`.
+It wraps the harness's own web server (`dsh web`) in a native window: one-click start, tray-resident,
+automatic crash recovery, auto-update, and the same data under `~/.dsh` as the browser version.
+Because it uses the system's own WebView2 instead of bundling a copy of Chromium, the installer is
+much smaller — and the embedded page is deliberately **not** granted Tauri IPC access, so it can't
+reach your filesystem.
+
+| | This app (Tauri) | Typical Electron wrapper |
+|---|---|---|
+| Windows installer | **54 MB** | 158 MB |
+| Runtime engine | System WebView2 | Bundled Chromium |
+| Embedded page permissions | No IPC access (disabled by default) | Depends on implementation |
+
+macOS (`.dmg`) and Linux (`.deb`) builds are also published with every release; the Windows
+installer is signed and wired into auto-update. The macOS/Linux builds are **unsigned and
+unnotarized** (no Apple Developer account) — macOS needs a one-time manual allow in
+System Settings → Privacy & Security, Linux installs normally via `dpkg -i` or your package
+manager, and neither currently participates in auto-update — you'll need to download new
+versions manually.
 
 ## Screenshots
 
@@ -28,6 +37,8 @@ UI you get by opening `http://127.0.0.1:3080` in a browser, with the same data u
   &nbsp;&nbsp;
   <img src="docs/screenshots/app-running.png" width="480" alt="DeepSeek Harness running inside the desktop app">
 </p>
+
+**[⬇️ Download the latest release](https://github.com/xiincs/deepseek-harness-desktop/releases/latest)**
 
 ## Features
 

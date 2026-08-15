@@ -9,21 +9,29 @@
 [![Platform: Linux](https://img.shields.io/badge/platform-Linux-FCC624)](#)
 [![Built with Tauri 2](https://img.shields.io/badge/built%20with-Tauri%202-24C8DB)](https://v2.tauri.app/)
 
-[DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的原生桌面版，基于
-[Tauri 2](https://v2.tauri.app/) 构建。Windows 安装包经过签名并接入自动更新；macOS（`.dmg`）和
-Linux（`.deb`）也在每个 Release 里提供，但**未签名、未公证**（没有 Apple Developer 账号）——
-macOS 上需要在"系统设置 → 隐私与安全性"里手动允许打开一次，Linux 直接 `dpkg -i`/系统安装器
-装即可，两者都不参与自动更新，需要手动下载新版本。
+### [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的原生桌面版——**Tauri 内核，安装包只有 Electron 版的 1/3 大小**
 
-它把 harness 自带的 Web 服务（`dsh web`）装进原生窗口：应用会自动拉起本地 `dsh` 服务进程，等它就绪后
-把内置的 WebView2 指向它——界面和数据都跟浏览器版完全一致（打开 `http://127.0.0.1:3080` 看到的同一个
-UI，`~/.dsh` 下的同一份数据），只是不用再开浏览器标签页。
+把 harness 自带的 Web 服务（`dsh web`）装进原生窗口：一键启动、托盘常驻、崩溃自动恢复、自动更新，
+`~/.dsh` 下的数据与浏览器版完全通用。因为用的是系统自带 WebView2 而不是打包一份 Chromium，
+安装包小很多；而且刻意**不**给内嵌页面开 Tauri IPC 权限——它接触不到你的文件系统。
+
+| | 本项目（Tauri） | 常见 Electron 封装 |
+|---|---|---|
+| Windows 安装包 | **54 MB** | 158 MB |
+| 运行时内核 | 系统自带 WebView2 | 内置 Chromium |
+| 内嵌页面权限 | 无 IPC 访问（默认关闭） | 视具体实现而定 |
+
+macOS（`.dmg`）和 Linux（`.deb`）也在每个 Release 里提供，Windows 版经过签名并接入自动更新；
+mac/Linux 版**未签名、未公证**（没有 Apple Developer 账号）——macOS 需要在"系统设置 → 隐私与
+安全性"里手动允许打开一次，Linux 直接 `dpkg -i`/系统安装器装即可，两者暂不参与自动更新。
 
 <p align="center">
   <img src="docs/screenshots/app-boot.png" alt="启动页：dsh 服务启动中">
   &nbsp;&nbsp;
   <img src="docs/screenshots/app-running.png" alt="桌面版内运行的 DeepSeek Harness">
 </p>
+
+**[⬇️ 下载最新版本](https://github.com/xiincs/deepseek-harness-desktop/releases/latest)**
 
 ## 特性
 
