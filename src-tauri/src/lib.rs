@@ -368,21 +368,22 @@ pub fn run() {
         // callback in the *first* process and exits immediately instead of
         // creating its own window/tray icon — see `show_main_window`.
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
-            // Deliberately scoped: a folder arg here (second launch, e.g.
-            // right-clicking a *different* folder while the app is already
-            // running) is logged but not acted on. Silently restarting the
-            // server against a new cwd would drop whatever session the
-            // already-open window has live — that's a real UX decision
-            // (new window? confirm first? something else?) this project
-            // doesn't have multi-workspace support to back yet, not
-            // something to improvise here. Focusing the existing window is
-            // still strictly better than doing nothing.
+            // A folder arg here (second launch — e.g. right-clicking a
+            // *different* folder in Explorer while the app is already
+            // running) switches the running server to that workspace.
+            // Doesn't lose anything: dsh persists sessions per-workspace-
+            // path under ~/.dsh/sessions/ regardless of which one the
+            // server is currently pointed at, so this is "switch which
+            // project's history you're looking at", not "discard unsaved
+            // work" — restart() (stop + start) already re-reads
+            // DSH_DESKTOP_CWD fresh on every call, so setting it here is
+            // all switching the workspace takes.
             if let Some(dir) = requested_workspace(&args) {
-                eprintln!(
-                    "[dsh-desktop] second launch requested workspace {} — \
-                     ignoring (no multi-workspace support yet), focusing existing window",
-                    dir.display()
-                );
+                std::env::set_var("DSH_DESKTOP_CWD", &dir);
+                let state = app.state::<AppState>();
+                let srv = state.server.clone();
+                let app2 = app.clone();
+                thread::spawn(move || server::restart(&app2, &srv));
             }
             show_main_window(app);
         }))
