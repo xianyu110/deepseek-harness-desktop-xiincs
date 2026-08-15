@@ -400,6 +400,28 @@ const LOCKED_WORKSPACE_KEY = "dsh-desktop-locked-workspace";
 // user decision.
 let lockedWorkspace = localStorage.getItem(LOCKED_WORKSPACE_KEY) || null;
 
+// Paths of directories the user collapsed. The tree is rebuilt from scratch
+// on every poll (see refreshTreeAndGitStatus's replaceChildren), so without
+// this the collapsed state would be lost and folders would re-expand within
+// PANEL_POLL_MS of being collapsed.
+//
+// TreeEntry.path is workspace-RELATIVE (see panel.rs), so these keys are
+// only meaningful for the workspace they were collapsed in — switching
+// workspaces must clear the set, or workspace B would silently inherit A's
+// collapse state for any same-relative-path directory (the same reason the
+// workspace-switch handler closes the open preview).
+const collapsedDirs = new Set();
+
+// Which workspace the last-rendered tree belonged to: lockedWorkspace when
+// pinned, else the auto-follow resolution. A change clears collapsedDirs.
+let renderedWorkspaceKey = null;
+
+function applyWorkspaceChange(workspaceKey) {
+  if (workspaceKey === null || workspaceKey === renderedWorkspaceKey) return;
+  renderedWorkspaceKey = workspaceKey;
+  collapsedDirs.clear();
+}
+
 function renderTreeNode(entry, gitMap, container) {
   const row = document.createElement("div");
   row.className = "tree-row" + (entry.isDir ? " tree-dir" : " tree-file");
@@ -416,7 +438,9 @@ function renderTreeNode(entry, gitMap, container) {
   // sitting one indent level to the left of them.
   if (hasChildren) {
     row.appendChild(iconEl("chevron-right", "tree-caret"));
-    row.classList.add("tree-expanded"); // matches .tree-children's default (un-collapsed) state
+    // Default is expanded; collapsed dirs render collapsed from the start so
+    // the user's choice survives the periodic full rebuild.
+    row.classList.toggle("tree-expanded", !collapsedDirs.has(entry.path));
   } else {
     const spacer = document.createElement("span");
     spacer.className = "tree-caret-spacer";
@@ -441,10 +465,13 @@ function renderTreeNode(entry, gitMap, container) {
   if (hasChildren) {
     const childWrap = document.createElement("div");
     childWrap.className = "tree-children";
+    if (collapsedDirs.has(entry.path)) childWrap.classList.add("collapsed");
     container.appendChild(childWrap);
     row.addEventListener("click", () => {
       const collapsed = childWrap.classList.toggle("collapsed");
       row.classList.toggle("tree-expanded", !collapsed);
+      if (collapsed) collapsedDirs.add(entry.path);
+      else collapsedDirs.delete(entry.path);
     });
     for (const child of entry.children) {
       renderTreeNode(child, gitMap, childWrap);
@@ -819,6 +846,13 @@ async function refreshTreeAndGitStatus() {
     }
   }
   renderWorkspaceOptions(await knownWorkspacesPromise, autoLabel);
+
+  // Collapse keys are workspace-relative: a different workspace means a
+  // fresh tree, so its collapse state starts empty. Covers both the manual
+  // picker and the auto-follow re-resolution above (autoLabel is the path
+  // get_active_workspace resolved; a transient failure keeps the old state
+  // rather than wiping it).
+  applyWorkspaceChange(lockedWorkspace ?? autoLabel);
 
   try {
     const treeArgs = { overridePath: lockedWorkspace };
