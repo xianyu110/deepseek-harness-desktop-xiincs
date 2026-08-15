@@ -17,7 +17,7 @@ use std::thread;
 use std::time::Duration;
 
 use tauri::menu::CheckMenuItem;
-use tauri::{AppHandle, Manager, State, WindowEvent, Wry};
+use tauri::{AppHandle, Manager, RunEvent, State, WindowEvent, Wry};
 use tauri_plugin_autostart::ManagerExt as _;
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt as _, Modifiers, Shortcut, ShortcutState};
 use tauri_plugin_notification::NotificationExt;
@@ -502,9 +502,9 @@ fn handle_menu_action(app: &AppHandle, id: &str) {
             }
         }
         menu::MENU_QUIT => {
-            // stop() is a safe no-op in attach mode (pid stays None there),
-            // so this only tears down a server we actually spawned.
-            server::stop(&state.server);
+            // The spawned server is torn down in the ExitRequested handler
+            // at the end of run() — the single place covering every quit
+            // path (app-menu ⌘Q role, tray 退出, updater restart).
             app.exit(0);
         }
         _ => {}
@@ -645,9 +645,9 @@ pub fn run() {
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
                 // Tray-resident mode: closing the window hides it but leaves
-                // the dsh server running in the background. Only the
-                // menu/tray "退出" action (MENU_QUIT, app.exit) stops the
-                // server and actually exits the process.
+                // the dsh server running in the background. Quitting (⌘Q /
+                // tray 退出) tears the server down in the ExitRequested
+                // handler and then exits the process.
                 api.prevent_close();
                 let _ = window.hide();
 
@@ -665,8 +665,20 @@ pub fn run() {
             }
         })
         .on_menu_event(|app, event| handle_menu_action(app, event.id.as_ref()))
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            // Tear down the spawned dsh server before the process exits —
+            // otherwise the child is orphaned and keeps serving. Every quit
+            // path (the app-menu ⌘Q role on macOS, the tray "退出" item,
+            // updater restarts) funnels into ExitRequested before the event
+            // loop ends, so this is the one place it needs to happen.
+            if let RunEvent::ExitRequested { .. } = event {
+                if let Some(state) = app.try_state::<AppState>() {
+                    server::stop(&state.server);
+                }
+            }
+        });
 }
 
 #[cfg(test)]
