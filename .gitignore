@@ -12,6 +12,11 @@ src-tauri/resources/runtime/
 # Generated per-release by scripts/build-latest-json.mjs
 /latest.json
 
+# Internal working notes (handoff docs, etc.) — useful locally, not meant
+# for the public repo: quotes private conversation, narrates in-progress
+# debugging. docs/screenshots/ stays tracked; only this subfolder is ignored.
+docs/internal/
+
 # OS / editor
 .DS_Store
 Thumbs.db
