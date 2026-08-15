@@ -12,6 +12,33 @@
   --danger: #d6336c;
   --success-bg: rgba(43, 138, 62, 0.12);
   --success-text: #2b8a3e;
+  --btn-hover-bg: #eaebed;
+  --btn-primary-hover-bg: #3564c9;
+}
+
+/* Mechanical dark-mode extension of the same tokens above — same
+   relationships (card lighter than bg, muted readable-but-secondary,
+   tint-bg/tint-text pairing), not a separate palette. --accent and
+   --danger are intentionally left unset here: this blue/pink pair already
+   has enough contrast against a dark background, and keeping brand/status
+   colors constant across themes is the more standard choice than
+   reinventing them per-theme. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1a1b1e;
+    --card: #232428;
+    --card-border: rgba(255, 255, 255, 0.1);
+    --card-shadow: 0 4px 12px rgba(0, 0, 0, 0.2), 0 2px 8px rgba(0, 0, 0, 0.3);
+    --sidebar-bg: #2a2b2f;
+    --text: #f0f1f3;
+    --muted: #9aa0a6;
+    --accent-tint-bg: rgba(65, 118, 230, 0.18);
+    --accent-tint-text: #a9c4fa;
+    --success-bg: rgba(43, 138, 62, 0.25);
+    --success-text: #69db7c;
+    --btn-hover-bg: #35363b;
+    --btn-primary-hover-bg: #5686e8;
+  }
 }
 
 * {
@@ -152,7 +179,7 @@ button {
 }
 
 button:hover {
-  background: #eaebed;
+  background: var(--btn-hover-bg);
 }
 
 button.primary {
@@ -162,7 +189,7 @@ button.primary {
 }
 
 button.primary:hover {
-  background: #3564c9;
+  background: var(--btn-primary-hover-bg);
 }
 
 button:disabled {
