@@ -259,6 +259,14 @@ body {
   max-height: 60%;
 }
 
+/* Files collapsed frees up #panel-cards' vertical space — hand it to the
+   preview instead of leaving it empty below a capped-at-60% card. */
+#card-files.card-collapsed ~ #card-file {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+}
+
 .dock-card-header {
   display: flex;
   align-items: center;
@@ -387,6 +395,31 @@ body {
   background: var(--accent);
 }
 
+/* Horizontal-bar variant of the same handle — between #card-files and
+   #card-file (a column split, not a row split), so the axis flips: a
+   fixed height instead of width, row-resize cursor, and the drawn line
+   runs the other way. */
+.resize-handle-h {
+  width: auto;
+  height: 8px;
+  cursor: row-resize;
+  /* #panel-cards' flex gap (10px) applies on both sides of this handle,
+     same as it does between any other two adjacent children — stacking
+     two full gaps around an already-8px-tall element reads as an
+     oversized empty band. Negative margin claws part of that back,
+     without touching the shared gap value everything else still uses. */
+  margin: -7px 0;
+}
+.resize-handle-h::after {
+  inset: 3.5px 0;
+  /* Invisible at rest — only the 8px drag hit-target remains, so the two
+     cards read as closer together. Still reveals itself in the accent
+     color on hover/drag via the shared .resize-handle:hover::after /
+     .resize-handle.dragging::after rule above (unchanged, already generic
+     across both handle variants). */
+  background: transparent;
+}
+
 /* A drag anywhere reaches past whatever the pointer happens to be over
    (CodeMirror included) without fighting its own mouse handling — set for
    the drag's duration by the mousedown handler in ui/app.js. */
@@ -395,6 +428,15 @@ body.resizing {
   user-select: none;
 }
 body.resizing iframe {
+  pointer-events: none;
+}
+
+body.resizing-rows {
+  cursor: row-resize;
+  user-select: none;
+}
+body.resizing-rows iframe,
+body.resizing-rows #panel-preview-body {
   pointer-events: none;
 }
 

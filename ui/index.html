@@ -166,6 +166,15 @@
               <div id="panel-tree"></div>
             </section>
 
+            <!--
+              Only meaningful (and only shown — see syncCardResizeHandleVisibility
+              in app.js) while both cards are in their normal state: collapsed
+              Files already claims this space for File via CSS (see the
+              #card-files.card-collapsed ~ #card-file rule), and there's
+              nothing to split against a closed File card.
+            -->
+            <div id="resize-panel-cards" class="resize-handle resize-handle-h hidden" role="separator" aria-orientation="horizontal"></div>
+
             <section id="card-file" class="dock-card hidden">
               <div class="dock-card-header">
                 <div id="panel-preview-title-group">

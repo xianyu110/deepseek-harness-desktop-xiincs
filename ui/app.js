@@ -32,6 +32,8 @@ const els = {
   panelTree: document.getElementById("panel-tree"),
   btnPanelRefresh: document.getElementById("btn-panel-refresh"),
   resizePanelContent: document.getElementById("resize-panel-content"),
+  panelCards: document.getElementById("panel-cards"),
+  resizePanelCards: document.getElementById("resize-panel-cards"),
   btnToolbarFiles: document.getElementById("btn-toolbar-files"),
   btnWinMinimize: document.getElementById("btn-win-minimize"),
   btnWinMaximize: document.getElementById("btn-win-maximize"),
@@ -173,9 +175,8 @@ function initWindowControls() {
 // applyPanelWidth) rather than living in styles.css, since a CSS width
 // can't be end-user-adjustable without JS setting it somewhere; the
 // stylesheet keeps a single fallback default for the instant before this
-// script runs. The two dock cards (Files/File) no longer share a
-// drag-adjustable split between them — each sizes to its own content and
-// scrolls independently, so there's nothing left to resize inside #panel.
+// script runs. See "resizable card split" below for the second, vertical
+// drag handle this same pattern extends to, between the two dock cards.
 
 const PANEL_WIDTH_KEY = "dsh-desktop-panel-width";
 const DEFAULT_PANEL_WIDTH = 380;
@@ -187,12 +188,12 @@ const MIN_PANEL_WIDTH = 240;
 // (the harness) staying visibly present matters more than an oversized dock.
 const MAX_PANEL_WIDTH_RATIO = 0.7;
 
-function loadStoredWidth(key, fallback) {
+function loadStoredPixels(key, fallback) {
   const n = parseInt(localStorage.getItem(key), 10);
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
-let panelWidth = loadStoredWidth(PANEL_WIDTH_KEY, DEFAULT_PANEL_WIDTH);
+let panelWidth = loadStoredPixels(PANEL_WIDTH_KEY, DEFAULT_PANEL_WIDTH);
 
 function applyPanelWidth() {
   els.panel.style.width = `${panelWidth}px`;
@@ -219,6 +220,83 @@ function initResizeHandle() {
       els.resizePanelContent.classList.remove("dragging");
       document.body.classList.remove("resizing");
       localStorage.setItem(PANEL_WIDTH_KEY, String(Math.round(panelWidth)));
+    };
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+  });
+}
+
+// ── resizable card split ────────────────────────────────────────────────
+//
+// A second, vertical drag handle between #card-files and #card-file —
+// only meaningful while both are in their normal (non-collapsed, open)
+// state; syncCardResizeHandleVisibility hides it otherwise, and the
+// #card-files.card-collapsed ~ #card-file CSS rule already gives File the
+// full height on its own once Files collapses, independent of whatever
+// height was last dragged here.
+//
+// Unset (null) until the user actually drags: #card-file's CSS
+// max-height:60% default keeps applying until then, same as
+// DEFAULT_PANEL_WIDTH's role above but via "no override yet" rather than a
+// numeric default, since unlike the dock's width this one has a perfectly
+// good zero-JS fallback already in the stylesheet.
+const CARD_FILE_HEIGHT_KEY = "dsh-desktop-card-file-height";
+let cardFileHeight = loadStoredPixels(CARD_FILE_HEIGHT_KEY, null);
+
+// Matches #card-files' own CSS min-height — the floor this drag leaves it,
+// so dragging past that point simply stops growing #card-file further
+// rather than the two fighting over the same pixels.
+const MIN_FILES_HEIGHT = 120;
+const MIN_CARD_FILE_HEIGHT = 100;
+
+function applyCardFileHeight() {
+  // Collapsed Files already hands File 100% via CSS — an inline style here
+  // would (inline always outranks a class selector) override that and pin
+  // File back to its last dragged height instead, so this stays cleared
+  // for exactly as long as Files is collapsed.
+  const collapsed = els.cardFiles.classList.contains("card-collapsed");
+  if (collapsed || cardFileHeight === null) {
+    els.cardFile.style.flexBasis = "";
+    els.cardFile.style.maxHeight = "";
+  } else {
+    els.cardFile.style.flexBasis = `${cardFileHeight}px`;
+    els.cardFile.style.maxHeight = "none";
+  }
+}
+
+// The handle only makes sense — and is only shown — while there's an
+// actual split to drag: Files expanded and a file open in the card below.
+function syncCardResizeHandleVisibility() {
+  const visible = !els.cardFiles.classList.contains("card-collapsed") && !els.cardFile.classList.contains("hidden");
+  els.resizePanelCards.classList.toggle("hidden", !visible);
+}
+
+function initCardsResizeHandle() {
+  els.resizePanelCards.addEventListener("mousedown", (downEvent) => {
+    downEvent.preventDefault();
+    els.resizePanelCards.classList.add("dragging");
+    document.body.classList.add("resizing-rows");
+
+    const startY = downEvent.clientY;
+    const startHeight = els.cardFile.getBoundingClientRect().height;
+
+    // The handle sits between Files (above) and File (below): dragging up
+    // (negative delta) shrinks Files and should grow File, hence the sign
+    // flip versus a naive "add the delta" — mirrors initResizeHandle's own
+    // clientX-from-the-right-edge inversion above for the same reason.
+    const onMouseMove = (moveEvent) => {
+      const delta = moveEvent.clientY - startY;
+      const candidate = startHeight - delta;
+      const max = Math.max(MIN_CARD_FILE_HEIGHT, els.panelCards.clientHeight - MIN_FILES_HEIGHT);
+      cardFileHeight = Math.max(MIN_CARD_FILE_HEIGHT, Math.min(max, candidate));
+      applyCardFileHeight();
+    };
+    const onMouseUp = () => {
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+      els.resizePanelCards.classList.remove("dragging");
+      document.body.classList.remove("resizing-rows");
+      localStorage.setItem(CARD_FILE_HEIGHT_KEY, String(Math.round(cardFileHeight)));
     };
     document.addEventListener("mousemove", onMouseMove);
     document.addEventListener("mouseup", onMouseUp);
@@ -562,6 +640,7 @@ async function showPreview(path) {
   if (!confirmDiscardIfNeeded()) return;
   currentPreviewPath = path;
   els.cardFile.classList.remove("hidden");
+  syncCardResizeHandleVisibility();
   els.panelPreviewTitle.textContent = path;
   els.panelPreviewTitle.title = path;
   destroyEditor();
@@ -618,6 +697,7 @@ function closePreview() {
   destroyEditor();
   els.cardFile.classList.add("hidden");
   els.panelPreviewBody.replaceChildren();
+  syncCardResizeHandleVisibility();
 }
 
 function revertCurrentEdit() {
@@ -750,6 +830,9 @@ const PANEL_POLL_MS = 6000;
 async function init() {
   applyPanelWidth();
   initResizeHandle();
+  applyCardFileHeight();
+  initCardsResizeHandle();
+  syncCardResizeHandleVisibility();
   initWindowControls();
 
   try {
@@ -796,6 +879,8 @@ async function init() {
     els.btnFilesCollapse
       .querySelector("use")
       .setAttribute("href", collapsed ? "#icon-chevron-down" : "#icon-chevron-up");
+    applyCardFileHeight();
+    syncCardResizeHandleVisibility();
   });
   els.btnPanelRefresh.addEventListener("click", refreshPanel);
   els.panelWorkspaceSelect.addEventListener("change", () => {
