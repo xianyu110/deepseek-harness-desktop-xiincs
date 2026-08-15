@@ -195,18 +195,55 @@ fn show_main_window(app: &AppHandle) {
 /// once — it stays in effect across every later `navigate()` call (both to
 /// the harness URL and back to the boot page on stop/restart).
 #[cfg(windows)]
+/// Removes only the context-menu items that caused real problems — not the
+/// whole menu. An earlier version called
+/// `SetAreDefaultContextMenusEnabled(false)`, which does disable the
+/// back/forward navigation-trap this exists to prevent, but that's the same
+/// menu Copy/Cut/Paste/Select All live on — nuking it took basic clipboard
+/// interaction out with it. `ContextMenuRequested` lets the menu items be
+/// inspected and selectively removed before it's shown, so "back"/"forward"
+/// (the navigation trap) and "reload"/"inspectElement" (would reload the
+/// remote harness page out from under its own client-side state, and
+/// re-open the DevTools access `disable_devtools` closes below) go, while
+/// everything else — Copy chief among them — stays.
 fn disable_context_menu(win: &tauri::WebviewWindow) {
-    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Controller;
+    use webview2_com::Microsoft::Web::WebView2::Win32::{ICoreWebView2Controller, ICoreWebView2_11};
+    use windows::core::{Interface, PWSTR};
     let _ = win.with_webview(|webview| {
         let controller: ICoreWebView2Controller = webview.controller();
         let result: windows::core::Result<()> = (|| unsafe {
             let core = controller.CoreWebView2()?;
-            let settings = core.Settings()?;
-            settings.SetAreDefaultContextMenusEnabled(false)?;
+            let core11: ICoreWebView2_11 = core.cast()?;
+            let mut token = Default::default();
+            core11.add_ContextMenuRequested(
+                &webview2_com::ContextMenuRequestedEventHandler::create(Box::new(
+                    move |_sender, args| {
+                        let Some(args) = args else { return Ok(()) };
+                        let items = args.MenuItems()?;
+                        let mut count = 0u32;
+                        items.Count(&mut count)?;
+                        // Remove back-to-front: RemoveValueAtIndex shifts
+                        // every later index down by one, so removing
+                        // forward-to-back would skip whatever lands on an
+                        // already-visited index.
+                        for i in (0..count).rev() {
+                            let item = items.GetValueAtIndex(i)?;
+                            let mut name_ptr = PWSTR::null();
+                            item.Name(&mut name_ptr)?;
+                            let name = name_ptr.to_string().unwrap_or_default();
+                            if matches!(name.as_str(), "back" | "forward" | "reload" | "inspectElement") {
+                                items.RemoveValueAtIndex(i)?;
+                            }
+                        }
+                        Ok(())
+                    },
+                )),
+                &mut token,
+            )?;
             Ok(())
         })();
         if let Err(e) = result {
-            eprintln!("[dsh-desktop] failed to disable WebView2 context menu: {e}");
+            eprintln!("[dsh-desktop] failed to trim WebView2 context menu: {e}");
         }
     });
 }
