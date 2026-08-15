@@ -345,6 +345,136 @@ fn parse_porcelain_record(record: &str) -> Option<GitEntry> {
     Some(GitEntry { path, status })
 }
 
+// ── file preview / edit ──────────────────────────────────────────────────
+//
+// Diffing is no longer computed here — `ui/app.js` hands both `current` and
+// `original` to CodeMirror's own `unifiedMergeView`, which diffs and renders
+// them client-side inside one always-editable pane (replacing an earlier,
+// separate read-only hand-rolled diff-hunk view; see the git history for
+// that version if it's ever useful again). This module's job narrows to
+// fetching the two documents each side needs.
+
+/// Generous ceiling on what this reads into memory — large enough for real
+/// source files, small enough that an accidentally-selected generated/data
+/// file doesn't stall the panel.
+const MAX_PREVIEW_BYTES: u64 = 2_000_000;
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum FileContent {
+    Text { content: String },
+    Binary,
+    TooLarge { bytes: u64 },
+    Error { message: String },
+}
+
+#[derive(Serialize, Clone)]
+pub struct EditablePreview {
+    /// Current on-disk content — `None` only for a file git reports
+    /// `Deleted` (there is nothing left to read from disk).
+    pub current: Option<FileContent>,
+    /// Last-committed (`HEAD`) content, present only when there's a prior
+    /// version worth comparing against (`Modified`/`Deleted`) — `None` for
+    /// an untracked or unchanged file, where nothing has diverged from HEAD
+    /// in a way this panel needs to show.
+    pub original: Option<FileContent>,
+}
+
+/// `rel_path`: workspace-relative, `/`-separated — the same shape
+/// `TreeEntry.path`/`GitEntry.path` already use, so the client passes
+/// straight through whichever tree row it clicked.
+pub fn editable_preview(root: &Path, rel_path: &str) -> EditablePreview {
+    let status = git_status(root).into_iter().find(|e| e.path == rel_path).map(|e| e.status);
+    let current = if matches!(status, Some(GitStatus::Deleted)) {
+        None
+    } else {
+        Some(text_preview(root, rel_path))
+    };
+    let original = match status {
+        Some(GitStatus::Modified) | Some(GitStatus::Deleted) => git_show_head(root, rel_path),
+        _ => None,
+    };
+    EditablePreview { current, original }
+}
+
+/// Plain file content read straight off disk — also the entry point
+/// `save_file`'s round-trip verification and any other consumer that just
+/// wants "what does this file currently contain" reaches for.
+pub fn text_preview(root: &Path, rel_path: &str) -> FileContent {
+    let full_path = root.join(rel_path);
+    let Ok(metadata) = fs::metadata(&full_path) else {
+        return FileContent::Error { message: "文件不存在".to_string() };
+    };
+    if metadata.len() > MAX_PREVIEW_BYTES {
+        return FileContent::TooLarge { bytes: metadata.len() };
+    }
+    let Ok(bytes) = fs::read(&full_path) else {
+        return FileContent::Error { message: "无法读取文件".to_string() };
+    };
+    // A NUL byte anywhere is a cheap, reliable-enough binary heuristic —
+    // the same one git itself uses to decide whether a file diffs as text.
+    if bytes.contains(&0) {
+        return FileContent::Binary;
+    }
+    match String::from_utf8(bytes) {
+        Ok(content) => FileContent::Text { content },
+        Err(_) => FileContent::Binary,
+    }
+}
+
+/// The file's content as of `HEAD` via `git show`, independent of the
+/// working tree — `None` when the path didn't exist at `HEAD` (e.g. a
+/// brand-new repo with no commits yet) rather than an error, since that's
+/// an ordinary, expected outcome this function's callers already treat as
+/// "nothing to compare against".
+fn git_show_head(root: &Path, rel_path: &str) -> Option<FileContent> {
+    let mut cmd = Command::new("git");
+    cmd.args(["show", &format!("HEAD:{rel_path}")]);
+    cmd.current_dir(crate::server::plain_win_path(root));
+    crate::server::hide_console(&mut cmd);
+    let output = cmd.output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    if output.stdout.len() as u64 > MAX_PREVIEW_BYTES {
+        return Some(FileContent::TooLarge { bytes: output.stdout.len() as u64 });
+    }
+    if output.stdout.contains(&0) {
+        return Some(FileContent::Binary);
+    }
+    match String::from_utf8(output.stdout) {
+        Ok(content) => Some(FileContent::Text { content }),
+        Err(_) => Some(FileContent::Binary),
+    }
+}
+
+/// Resolves `rel_path` under `root` and verifies the result is actually
+/// still *inside* `root` before any write touches disk. `rel_path` only
+/// ever originates from this panel's own tree listing today (never
+/// arbitrary user-typed input), so a `..`-escaping value shouldn't be
+/// reachable in practice — this check exists anyway because a write is a
+/// meaningfully higher-consequence operation than the read paths above,
+/// where the same class of bug would only misdirect a preview rather than
+/// overwrite a file outside the workspace.
+fn resolve_within_root(root: &Path, rel_path: &str) -> Result<PathBuf, String> {
+    let candidate = root.join(rel_path);
+    let root_canon = root.canonicalize().map_err(|e| format!("无法解析工作区路径: {e}"))?;
+    let candidate_canon = candidate.canonicalize().map_err(|e| format!("无法解析文件路径: {e}"))?;
+    if !candidate_canon.starts_with(&root_canon) {
+        return Err("路径超出工作区范围".to_string());
+    }
+    Ok(candidate_canon)
+}
+
+/// Overwrites an existing file's content. Refuses to create a new file
+/// (`resolve_within_root`'s `canonicalize()` requires the target to already
+/// exist) — this is an edit-and-save path for a file the tree already
+/// listed, not a general file-creation API.
+pub fn save_file(root: &Path, rel_path: &str, content: &str) -> Result<(), String> {
+    let full_path = resolve_within_root(root, rel_path)?;
+    fs::write(&full_path, content).map_err(|e| format!("保存失败: {e}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -547,6 +677,159 @@ mod tests {
         assert_eq!(tree[0].path, "src");
         assert_eq!(tree[0].children.as_ref().unwrap()[0].path, "src/main.rs");
 
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ── file preview / edit ─────────────────────────────────────────────
+
+    fn git_repo_with_one_commit(name: &str) -> std::path::PathBuf {
+        let dir = scratch_dir(name);
+        git(&dir, &["init", "-q"]);
+        git(&dir, &["config", "user.email", "test@example.com"]);
+        git(&dir, &["config", "user.name", "test"]);
+        dir
+    }
+
+    fn text_of(content: Option<FileContent>) -> String {
+        match content {
+            Some(FileContent::Text { content }) => content,
+            other => panic!("expected Some(Text), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn editable_preview_of_a_modified_file_has_both_current_and_head_content() {
+        let dir = git_repo_with_one_commit("editable-modified");
+        fs::write(dir.join("a.txt"), "one\ntwo\nthree\n").unwrap();
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-q", "-m", "init"]);
+        fs::write(dir.join("a.txt"), "one\nTWO\nthree\nfour\n").unwrap();
+
+        let preview = editable_preview(&dir, "a.txt");
+        assert_eq!(text_of(preview.current), "one\nTWO\nthree\nfour\n");
+        assert_eq!(text_of(preview.original), "one\ntwo\nthree\n");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn editable_preview_of_a_deleted_file_has_head_content_but_no_current() {
+        let dir = git_repo_with_one_commit("editable-deleted");
+        fs::write(dir.join("gone.txt"), "still in history\n").unwrap();
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-q", "-m", "init"]);
+        fs::remove_file(dir.join("gone.txt")).unwrap();
+
+        let preview = editable_preview(&dir, "gone.txt");
+        assert!(preview.current.is_none());
+        assert_eq!(text_of(preview.original), "still in history\n");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn editable_preview_of_an_untracked_file_has_current_but_no_original() {
+        let dir = git_repo_with_one_commit("editable-untracked");
+        fs::write(dir.join("new.txt"), "brand new content\n").unwrap();
+
+        let preview = editable_preview(&dir, "new.txt");
+        assert_eq!(text_of(preview.current), "brand new content\n");
+        assert!(preview.original.is_none());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn editable_preview_of_an_unchanged_tracked_file_has_no_original() {
+        let dir = git_repo_with_one_commit("editable-unchanged");
+        fs::write(dir.join("stable.txt"), "nothing to see here\n").unwrap();
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-q", "-m", "init"]);
+
+        let preview = editable_preview(&dir, "stable.txt");
+        assert_eq!(text_of(preview.current), "nothing to see here\n");
+        assert!(preview.original.is_none());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn git_show_head_of_a_path_absent_at_head_is_none_not_an_error() {
+        let dir = git_repo_with_one_commit("show-head-absent");
+        // No commits reference this path at all — a brand-new, wholly
+        // untracked file, not merely one with local edits.
+        assert!(git_show_head(&dir, "never-committed.txt").is_none());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn text_preview_of_a_missing_path_is_an_error_not_a_panic() {
+        let dir = scratch_dir("preview-missing");
+        let preview = text_preview(&dir, "does-not-exist.txt");
+        assert!(matches!(preview, FileContent::Error { .. }));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn text_preview_of_binary_content_is_binary_not_text() {
+        let dir = scratch_dir("preview-binary");
+        fs::write(dir.join("blob.bin"), [0u8, 1, 2, 3, 0, 255]).unwrap();
+        let preview = text_preview(&dir, "blob.bin");
+        assert!(matches!(preview, FileContent::Binary));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ── save ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn save_file_overwrites_existing_content() {
+        let dir = scratch_dir("save-ok");
+        fs::write(dir.join("a.txt"), "old").unwrap();
+
+        let result = save_file(&dir, "a.txt", "new content");
+        assert!(result.is_ok());
+        assert_eq!(fs::read_to_string(dir.join("a.txt")).unwrap(), "new content");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_file_writes_into_a_nested_path() {
+        let dir = scratch_dir("save-nested");
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::write(dir.join("src").join("main.rs"), "old").unwrap();
+
+        let result = save_file(&dir, "src/main.rs", "fn main() {}");
+        assert!(result.is_ok());
+        assert_eq!(fs::read_to_string(dir.join("src").join("main.rs")).unwrap(), "fn main() {}");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_file_rejects_a_path_that_escapes_root() {
+        let dir = scratch_dir("save-escape");
+        let outside = scratch_dir("save-escape-outside-target");
+        fs::write(outside.join("secret.txt"), "should not be touched").unwrap();
+
+        // "../save-escape-outside-target-<pid>/secret.txt" — walks back out
+        // of `dir` to a real, existing file elsewhere on disk. Both scratch
+        // dirs share std::env::temp_dir() as a parent, so ".." reaches it.
+        let escaping_rel_path = format!("../{}/secret.txt", outside.file_name().unwrap().to_string_lossy());
+
+        let result = save_file(&dir, &escaping_rel_path, "overwritten");
+        assert!(result.is_err());
+        assert_eq!(fs::read_to_string(outside.join("secret.txt")).unwrap(), "should not be touched");
+
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&outside);
+    }
+
+    #[test]
+    fn save_file_rejects_a_nonexistent_target() {
+        let dir = scratch_dir("save-missing");
+        let result = save_file(&dir, "does-not-exist.txt", "content");
+        assert!(result.is_err());
         let _ = fs::remove_dir_all(&dir);
     }
 }

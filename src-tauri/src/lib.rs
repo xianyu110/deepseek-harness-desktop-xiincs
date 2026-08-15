@@ -136,6 +136,39 @@ fn get_known_workspaces(app: AppHandle, state: State<'_, AppState>) -> Vec<panel
     panel::known_workspaces(&app, &state.server)
 }
 
+/// `path`: workspace-relative, as returned in a `TreeEntry`/`GitEntry`'s own
+/// `path` field — the client passes through whichever tree row it clicked.
+/// `override_path`: same manual-picker override as `get_workspace_tree`.
+/// Returns both the current and (when there's a prior committed version
+/// worth comparing against) `HEAD` content — `ui/app.js` hands both straight
+/// to CodeMirror's `unifiedMergeView`, which does the actual diffing.
+#[tauri::command]
+fn get_editable_preview(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    path: String,
+    override_path: Option<String>,
+) -> panel::EditablePreview {
+    let root = override_path
+        .map(PathBuf::from)
+        .unwrap_or_else(|| panel::effective_workspace_dir(&app, &state.server));
+    panel::editable_preview(&root, &path)
+}
+
+#[tauri::command]
+fn save_file_content(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    path: String,
+    content: String,
+    override_path: Option<String>,
+) -> Result<(), String> {
+    let root = override_path
+        .map(PathBuf::from)
+        .unwrap_or_else(|| panel::effective_workspace_dir(&app, &state.server));
+    panel::save_file(&root, &path, &content)
+}
+
 #[tauri::command]
 fn get_log_tail(state: State<'_, AppState>, n: Option<usize>) -> Vec<String> {
     server::log_tail(&state.server, n.unwrap_or(100))
@@ -465,7 +498,9 @@ pub fn run() {
             get_workspace_tree,
             get_git_status,
             get_active_workspace,
-            get_known_workspaces
+            get_known_workspaces,
+            get_editable_preview,
+            save_file_content
         ])
         .setup(|app| {
             let handle = app.handle().clone();

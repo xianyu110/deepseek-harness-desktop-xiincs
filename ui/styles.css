@@ -76,6 +76,13 @@ body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  transition: width 0.15s ease;
+}
+
+/* Widens to fit the tree (narrowed) beside the preview, rather than the
+   preview competing with the tree for the original 280px. */
+#panel.with-preview {
+  width: 640px;
 }
 
 #panel-header {
@@ -145,6 +152,13 @@ body {
   outline-offset: 1px;
 }
 
+#panel-body {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+  min-height: 0;
+}
+
 #panel-tree {
   flex: 1;
   overflow-y: auto;
@@ -153,27 +167,147 @@ body {
   user-select: text;
 }
 
+#panel.with-preview #panel-tree {
+  flex: 0 0 250px;
+}
+
 .panel-empty {
   padding: 8px;
   font-size: 12px;
 }
 
+/* ── file preview: hidden until #panel has .with-preview ── */
+
+#panel-preview {
+  display: none;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  border-left: 1px solid var(--card-border);
+  background: var(--card);
+  overflow: hidden;
+}
+
+#panel.with-preview #panel-preview {
+  display: flex;
+}
+
+#panel-preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--card-border);
+  flex-shrink: 0;
+}
+
+#panel-preview-title-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  min-width: 0;
+}
+
+#panel-preview-title {
+  font-size: 11.5px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: text;
+}
+
+#panel-preview-dirty-dot {
+  flex-shrink: 0;
+  font-size: 8px;
+  line-height: 1;
+  color: var(--accent);
+}
+
+#panel-preview-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+#btn-preview-close,
+#btn-preview-revert,
+#btn-preview-save {
+  background: transparent;
+  border: none;
+  padding: 3px 9px;
+  border-radius: 999px;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 11.5px;
+  flex-shrink: 0;
+}
+
+#btn-preview-close {
+  padding: 2px 7px;
+  font-size: 12px;
+}
+
+#btn-preview-close:hover,
+#btn-preview-revert:hover {
+  background: var(--btn-hover-bg);
+}
+
+#btn-preview-save {
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+#btn-preview-save:hover {
+  background: var(--btn-primary-hover-bg);
+}
+
+#btn-preview-save:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* CodeMirror manages its own internal scrolling (.cm-scroller) once
+   mounted — this stays a plain sized box, not a second scroll container,
+   or a long file would get two competing scrollbars. */
+#panel-preview-body {
+  flex: 1;
+  overflow: hidden;
+  min-height: 0;
+}
+
+#panel-preview-body .cm-editor {
+  height: 100%;
+}
+
 .tree-row {
   padding: 3px 8px;
   border-radius: 6px;
-  cursor: default;
+  cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .tree-dir {
-  cursor: pointer;
   font-weight: 500;
 }
 
 .tree-row:hover {
   background: var(--btn-hover-bg);
+}
+
+.tree-row-selected {
+  background: var(--accent-tint-bg);
+  color: var(--accent-tint-text);
+}
+
+.tree-row-selected .tree-label {
+  color: inherit;
 }
 
 .tree-children {

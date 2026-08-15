@@ -26,9 +26,17 @@ const els = {
   btnUpdateDismiss: document.getElementById("btn-update-dismiss"),
   providerTip: document.getElementById("provider-tip"),
   btnProviderTipDismiss: document.getElementById("btn-provider-tip-dismiss"),
+  panel: document.getElementById("panel"),
   panelWorkspaceSelect: document.getElementById("panel-workspace-select"),
   panelTree: document.getElementById("panel-tree"),
   btnPanelRefresh: document.getElementById("btn-panel-refresh"),
+  panelPreview: document.getElementById("panel-preview"),
+  panelPreviewTitle: document.getElementById("panel-preview-title"),
+  panelPreviewDirtyDot: document.getElementById("panel-preview-dirty-dot"),
+  panelPreviewBody: document.getElementById("panel-preview-body"),
+  btnPreviewClose: document.getElementById("btn-preview-close"),
+  btnPreviewSave: document.getElementById("btn-preview-save"),
+  btnPreviewRevert: document.getElementById("btn-preview-revert"),
 };
 
 // Shown once (best-effort) during the first-ever boot wait, so new users
@@ -146,6 +154,7 @@ function renderTreeNode(entry, gitMap, container) {
   row.className = "tree-row" + (entry.isDir ? " tree-dir" : " tree-file");
   const status = gitMap.get(entry.path);
   if (status && GIT_STATUS_CLASS[status]) row.classList.add(GIT_STATUS_CLASS[status]);
+  if (!entry.isDir && entry.path === currentPreviewPath) row.classList.add("tree-row-selected");
 
   const label = document.createElement("span");
   label.className = "tree-label";
@@ -161,6 +170,306 @@ function renderTreeNode(entry, gitMap, container) {
     for (const child of entry.children) {
       renderTreeNode(child, gitMap, childWrap);
     }
+  } else if (!entry.isDir) {
+    row.addEventListener("click", () => {
+      if (currentPreviewPath === entry.path) {
+        closePreview();
+      } else {
+        showPreview(entry.path);
+      }
+    });
+  }
+}
+
+// ── file preview / edit (CodeMirror) ────────────────────────────────────
+//
+// Opening a file goes straight to an editable CodeMirror instance — no
+// separate read-only "view" the user has to explicitly leave to edit. When
+// the file has a git status worth comparing against (Modified/Deleted),
+// @codemirror/merge's unifiedMergeView adds inline gutter decorations for
+// the changed regions on top of that same editable pane (VS Code's own
+// pattern: gutter markers are informational, not a second view to switch
+// into), diffing client-side against the file's last-committed (HEAD)
+// content — no more hand-rolled diff parsing on the Rust side.
+//
+// Two independent "did this change" baselines coexist deliberately:
+//   1. git HEAD vs current content → the merge view's own gutter/inline
+//      decorations. Unaffected by saving to disk (HEAD only moves on a
+//      commit) — never needs refetching after a save.
+//   2. last load-or-save vs the live, possibly-unsaved editor content →
+//      this file's own dirty-dot/保存/还原 tracking, via currentSavedContent
+//      below. Reset to "clean" on every successful save.
+// "还原" only ever undoes (1) against baseline (2) — the current *editing
+// session's* unsaved typing — never git's committed history. Conflating
+// the two would make a UI button that reads as "undo my typing" silently
+// capable of discarding a git-tracked change instead.
+
+let currentPreviewPath = null;
+let currentEditorView = null;
+// The content as of the last successful load or save — see the baseline
+// note above. `null` whenever no editor is mounted.
+let currentSavedContent = null;
+// Built once, lazily, and reused by every editor instance — colors are
+// resolved via var(...) at paint time, so they already stay correct across
+// a live prefers-color-scheme change without rebuilding this.
+let cmBaseExtensions = null;
+
+function buildCodeMirrorBaseExtensions() {
+  if (cmBaseExtensions) return cmBaseExtensions;
+  const CM = window.CM;
+  const t = CM.tags;
+  const highlightStyle = CM.HighlightStyle.define([
+    { tag: t.comment, color: "var(--muted)", fontStyle: "italic" },
+    { tag: [t.string, t.special(t.string)], color: "var(--success-text)" },
+    { tag: [t.number, t.bool, t.null], color: "var(--danger)" },
+    { tag: [t.keyword, t.controlKeyword, t.operatorKeyword, t.moduleKeyword], color: "var(--accent)" },
+    { tag: [t.function(t.variableName), t.className, t.typeName], color: "var(--accent-tint-text)" },
+    { tag: t.propertyName, color: "var(--text)" },
+    { tag: t.punctuation, color: "var(--muted)" },
+    { tag: t.tagName, color: "var(--accent)" },
+    { tag: t.attributeName, color: "var(--accent-tint-text)" },
+    { tag: t.invalid, color: "var(--danger)", textDecoration: "underline" },
+  ]);
+
+  const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+  const theme = CM.EditorView.theme(
+    {
+      "&": { height: "100%", fontSize: "11px", backgroundColor: "var(--card)", color: "var(--text)" },
+      ".cm-content": {
+        fontFamily: "'SF Mono','JetBrains Mono','Fira Code',Consolas,Menlo,monospace",
+        caretColor: "var(--text)",
+        padding: "8px 0",
+      },
+      ".cm-gutters": { backgroundColor: "var(--sidebar-bg)", color: "var(--muted)", border: "none" },
+      ".cm-activeLine": { backgroundColor: "color-mix(in srgb, var(--accent) 6%, transparent)" },
+      ".cm-activeLineGutter": { backgroundColor: "color-mix(in srgb, var(--accent) 10%, transparent)" },
+      "&.cm-focused .cm-cursor": { borderLeftColor: "var(--text)" },
+      ".cm-scroller": { overflow: "auto" },
+      // @codemirror/merge's own decoration classes — overridden to this
+      // project's tokens rather than its default hardcoded rgba() colors
+      // (same "no new palette" rule already applied to every other color
+      // in this file).
+      ".cm-changedLine": { backgroundColor: "color-mix(in srgb, var(--accent) 10%, transparent)" },
+      ".cm-changedLineGutter": { backgroundColor: "color-mix(in srgb, var(--accent) 18%, transparent)" },
+      ".cm-changedText": { backgroundColor: "color-mix(in srgb, var(--accent) 22%, transparent)" },
+      ".cm-deletedChunk": { backgroundColor: "color-mix(in srgb, var(--danger) 6%, transparent)" },
+      ".cm-deletedLine": { backgroundColor: "color-mix(in srgb, var(--danger) 10%, transparent)" },
+      ".cm-deletedLineGutter": { backgroundColor: "color-mix(in srgb, var(--danger) 18%, transparent)" },
+      ".cm-deletedText": { background: "none", textDecoration: "line-through", color: "var(--danger)" },
+      ".cm-insertedLine": { backgroundColor: "color-mix(in srgb, var(--success-text) 12%, transparent)" },
+    },
+    { dark },
+  );
+
+  cmBaseExtensions = [CM.syntaxHighlighting(highlightStyle), theme];
+  return cmBaseExtensions;
+}
+
+// Extension → CodeMirror language extension, for the fixed package set
+// bundled in vendor/codemirror. An unmapped extension (or none) just opens
+// unhighlighted plain text rather than failing.
+function languageExtensionForPath(path) {
+  const CM = window.CM;
+  if (!CM) return null;
+  const L = CM.languages;
+  const ext = path.slice(path.lastIndexOf(".") + 1).toLowerCase();
+  switch (ext) {
+    case "js": case "mjs": case "cjs": return L.javascript();
+    case "jsx": return L.javascript({ jsx: true });
+    case "ts": return L.javascript({ typescript: true });
+    case "tsx": return L.javascript({ jsx: true, typescript: true });
+    case "rs": return L.rust();
+    case "py": return L.python();
+    case "json": return L.json();
+    case "css": return L.css();
+    case "html": case "htm": return L.html();
+    case "md": return L.markdown();
+    case "yaml": case "yml": return L.yaml();
+    case "sql": return L.sql();
+    case "java": return L.java();
+    case "go": return L.go();
+    case "c": case "h": case "cpp": case "cc": case "hpp": case "cxx": return L.cpp();
+    default: return null;
+  }
+}
+
+function isDirty() {
+  return currentEditorView !== null && currentSavedContent !== null && currentEditorView.state.doc.toString() !== currentSavedContent;
+}
+
+function setDirty(dirty) {
+  els.panelPreviewDirtyDot.classList.toggle("hidden", !dirty);
+  els.btnPreviewSave.classList.toggle("hidden", !dirty);
+  els.btnPreviewRevert.classList.toggle("hidden", !dirty);
+}
+
+// True if it's safe to proceed with whatever's about to replace or close
+// the current preview: nothing open, nothing unsaved, or the user
+// explicitly confirmed discarding it. Never mutates state itself — the
+// caller that gets `true` back is the one actually tearing down or
+// replacing the editor.
+function confirmDiscardIfNeeded() {
+  if (!isDirty()) return true;
+  return confirm("有未保存的改动，确定要放弃吗？");
+}
+
+function destroyEditor() {
+  if (currentEditorView) {
+    currentEditorView.destroy();
+    currentEditorView = null;
+  }
+  currentSavedContent = null;
+  setDirty(false);
+}
+
+function contentTextOrNull(fileContent) {
+  return fileContent && fileContent.kind === "text" ? fileContent.content : null;
+}
+
+// `preview` is a Rust EditablePreview: { current: FileContent | null,
+// original: FileContent | null }. `current` is null only for a git-Deleted
+// file (nothing left on disk); `original` is null unless there's a HEAD
+// version worth diffing against (Modified/Deleted).
+function mountEditor(path, preview) {
+  const CM = window.CM;
+  destroyEditor();
+  els.panelPreviewBody.replaceChildren();
+
+  if (preview.current === null) {
+    const originalText = contentTextOrNull(preview.original);
+    if (originalText === null) {
+      els.panelPreviewBody.textContent = "无法读取此文件的历史内容";
+      return;
+    }
+    const extensions = [CM.basicSetup, ...buildCodeMirrorBaseExtensions(), CM.EditorState.readOnly.of(true)];
+    const lang = languageExtensionForPath(path);
+    if (lang) extensions.push(lang);
+    currentEditorView = new CM.EditorView({ doc: originalText, extensions, parent: els.panelPreviewBody });
+    currentSavedContent = originalText;
+    return;
+  }
+
+  const current = preview.current;
+  if (current.kind === "binary") {
+    els.panelPreviewBody.textContent = "二进制文件，无法预览";
+    return;
+  }
+  if (current.kind === "tooLarge") {
+    els.panelPreviewBody.textContent = `文件过大（${(current.bytes / 1024 / 1024).toFixed(1)} MB），未加载预览`;
+    return;
+  }
+  if (current.kind === "error") {
+    els.panelPreviewBody.textContent = current.message;
+    return;
+  }
+
+  const originalText = contentTextOrNull(preview.original);
+  const lang = languageExtensionForPath(path);
+  const extensions = [
+    CM.basicSetup,
+    ...buildCodeMirrorBaseExtensions(),
+    CM.keymap.of([
+      CM.indentWithTab,
+      { key: "Mod-s", preventDefault: true, run: () => (saveCurrentEdit(), true) },
+    ]),
+    CM.EditorView.updateListener.of((update) => {
+      if (update.docChanged) setDirty(isDirty());
+    }),
+  ];
+  if (lang) extensions.push(lang);
+  // gutter markers only, no per-chunk accept/reject buttons — this is an
+  // ordinary editable file with an informational "differs from HEAD"
+  // signal, not a merge-conflict resolution UI.
+  if (originalText !== null) extensions.push(CM.unifiedMergeView({ original: originalText, mergeControls: false }));
+
+  currentEditorView = new CM.EditorView({ doc: current.content, extensions, parent: els.panelPreviewBody });
+  currentSavedContent = current.content;
+  setDirty(false);
+}
+
+async function showPreview(path) {
+  if (!confirmDiscardIfNeeded()) return;
+  currentPreviewPath = path;
+  els.panel.classList.add("with-preview");
+  els.panelPreviewTitle.textContent = path;
+  els.panelPreviewTitle.title = path;
+  destroyEditor();
+  els.panelPreviewBody.replaceChildren();
+  const loading = document.createElement("p");
+  loading.className = "muted panel-empty";
+  loading.textContent = "加载中…";
+  els.panelPreviewBody.appendChild(loading);
+
+  try {
+    const preview = await invoke("get_editable_preview", { path, overridePath: lockedWorkspace });
+    // A slower load may resolve after the user already clicked a different
+    // file (or closed the preview) — never let a stale response overwrite
+    // whatever's actually being shown now.
+    if (currentPreviewPath !== path) return;
+    mountEditor(path, preview);
+  } catch (err) {
+    if (currentPreviewPath !== path) return;
+    els.panelPreviewBody.textContent = `预览加载失败: ${err}`;
+  }
+}
+
+// Re-fetches the open preview on the same cadence as the tree/git-status
+// poll (called from refreshPanel) — the agent is very plausibly editing the
+// exact file being previewed. Skipped entirely while there's an unsaved
+// local edit: a background poll must never clobber that, and re-mounting a
+// fresh editor on every tick would also reset cursor/scroll/undo history
+// for no reason once the file has settled.
+async function refreshCurrentPreview() {
+  if (currentPreviewPath === null || isDirty()) return;
+  const path = currentPreviewPath;
+  try {
+    const preview = await invoke("get_editable_preview", { path, overridePath: lockedWorkspace });
+    if (currentPreviewPath !== path) return;
+    mountEditor(path, preview);
+  } catch {
+    /* leave whatever's already showing rather than blanking it over a transient poll failure */
+  }
+}
+
+function closePreview() {
+  if (!confirmDiscardIfNeeded()) return;
+  currentPreviewPath = null;
+  destroyEditor();
+  els.panel.classList.remove("with-preview");
+  els.panelPreviewBody.replaceChildren();
+}
+
+function revertCurrentEdit() {
+  if (!currentEditorView || currentSavedContent === null) return;
+  if (!confirm("放弃当前改动，还原为上次保存的内容？")) return;
+  currentEditorView.dispatch({
+    changes: { from: 0, to: currentEditorView.state.doc.length, insert: currentSavedContent },
+  });
+  setDirty(false);
+}
+
+async function saveCurrentEdit() {
+  if (!currentEditorView || currentPreviewPath === null) return;
+  const path = currentPreviewPath;
+  const content = currentEditorView.state.doc.toString();
+  els.btnPreviewSave.disabled = true;
+  try {
+    await invoke("save_file_content", { path, content, overridePath: lockedWorkspace });
+    currentSavedContent = content;
+    setDirty(false);
+    // The tree's git-status coloring should reflect a just-saved change
+    // immediately, not after up to PANEL_POLL_MS — deliberately
+    // refreshTreeAndGitStatus(), not the full refreshPanel(): HEAD hasn't
+    // moved (a disk save isn't a commit), so the merge view's own gutter
+    // decorations don't need refetching, and re-mounting the editor here
+    // would reset cursor/scroll right after the user's own save action.
+    refreshTreeAndGitStatus();
+  } catch (err) {
+    // Left exactly as the user typed it on failure — nothing is discarded
+    // on a failed write.
+    alert(`保存失败: ${err}`);
+  } finally {
+    els.btnPreviewSave.disabled = false;
   }
 }
 
@@ -199,7 +508,10 @@ function renderWorkspaceOptions(knownWorkspaces, autoLabel) {
   select.value = lockedWorkspace ?? AUTO_OPTION_VALUE;
 }
 
-async function refreshPanel() {
+// Split out from refreshPanel so saveCurrentEdit can refresh the tree's
+// git-status coloring right after a save without also re-mounting the
+// editor it just saved (see the comment on saveCurrentEdit).
+async function refreshTreeAndGitStatus() {
   const knownWorkspacesPromise = invoke("get_known_workspaces").catch(() => []);
 
   // Skipped entirely once the user has a manual pick locked in — there's
@@ -230,14 +542,19 @@ async function refreshPanel() {
       empty.className = "muted panel-empty";
       empty.textContent = "空工作区";
       els.panelTree.appendChild(empty);
-      return;
-    }
-    for (const entry of tree) {
-      renderTreeNode(entry, gitMap, els.panelTree);
+    } else {
+      for (const entry of tree) {
+        renderTreeNode(entry, gitMap, els.panelTree);
+      }
     }
   } catch (err) {
     els.panelTree.textContent = `无法加载文件树: ${err}`;
   }
+}
+
+async function refreshPanel() {
+  await refreshTreeAndGitStatus();
+  await refreshCurrentPreview();
 }
 
 // Cheap enough (one directory walk + one `git status`) to poll rather than
@@ -288,14 +605,28 @@ async function init() {
   els.btnPanelRefresh.addEventListener("click", refreshPanel);
   els.panelWorkspaceSelect.addEventListener("change", () => {
     const value = els.panelWorkspaceSelect.value;
+    if (!confirmDiscardIfNeeded()) {
+      // The <select>'s own DOM value already changed on click, ahead of
+      // this handler — revert it to match the choice actually still in
+      // effect, or the control would show a selection the app never adopted.
+      els.panelWorkspaceSelect.value = lockedWorkspace ?? AUTO_OPTION_VALUE;
+      return;
+    }
     lockedWorkspace = value === AUTO_OPTION_VALUE ? null : value;
     if (lockedWorkspace === null) {
       localStorage.removeItem(LOCKED_WORKSPACE_KEY);
     } else {
       localStorage.setItem(LOCKED_WORKSPACE_KEY, lockedWorkspace);
     }
+    // An open preview's path is relative to whichever workspace was active
+    // when it was opened — re-resolving it against the new one could silently
+    // show an unrelated (or nonexistent) file of the same relative path.
+    closePreview();
     refreshPanel();
   });
+  els.btnPreviewClose.addEventListener("click", closePreview);
+  els.btnPreviewSave.addEventListener("click", saveCurrentEdit);
+  els.btnPreviewRevert.addEventListener("click", revertCurrentEdit);
 
   els.btnUpdateDismiss.addEventListener("click", () => {
     els.updateBanner.classList.add("hidden");

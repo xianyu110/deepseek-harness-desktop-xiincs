@@ -17,7 +17,23 @@
           <button id="btn-panel-refresh" title="刷新文件树与 Git 状态">⟳</button>
         </div>
         <select id="panel-workspace-select" title="选择要在文件树中查看的工作区"></select>
-        <div id="panel-tree"></div>
+        <div id="panel-body">
+          <div id="panel-tree"></div>
+          <div id="panel-preview">
+            <div id="panel-preview-header">
+              <div id="panel-preview-title-group">
+                <span id="panel-preview-title"></span>
+                <span id="panel-preview-dirty-dot" class="hidden" title="有未保存的改动">●</span>
+              </div>
+              <div id="panel-preview-actions">
+                <button id="btn-preview-revert" class="hidden" title="放弃改动，还原为已保存内容">还原</button>
+                <button id="btn-preview-save" class="hidden" title="保存改动 (Ctrl+S)">保存</button>
+                <button id="btn-preview-close" title="关闭预览">✕</button>
+              </div>
+            </div>
+            <div id="panel-preview-body"></div>
+          </div>
+        </div>
         <footer id="footer"></footer>
       </aside>
 
@@ -69,6 +85,24 @@
         <iframe id="harness-frame" class="hidden" title="DeepSeek Harness"></iframe>
       </div>
     </div>
+    <!--
+      A real code editor (CodeMirror 6), not a highlighter + textarea +
+      hand-rolled diff view: opening a file goes straight to an editable
+      pane, with git changes shown as inline decorations via
+      @codemirror/merge's unifiedMergeView, same font/rendering engine for
+      both — no separate "view" vs "edit" mode to keep visually consistent
+      by hand. Vendored locally, not a CDN (this app runs fully offline):
+      codemirror-bundle.min.js is a single self-contained IIFE (window.CM),
+      produced with esbuild from the unmodified published npm packages —
+      see vendor/codemirror/LICENSE for exactly which ones and why a build
+      step was used instead of fetching pre-built files directly (CodeMirror
+      6 doesn't publish one; its browser distribution is dozens of small ESM
+      packages meant to be bundled by the consuming app). Theme/highlight
+      colors are this project's own tokens, defined in app.js next to the
+      editor setup (CodeMirror's theming API is JS, not a stylesheet, unlike
+      Prism's .token.* classes this replaced).
+    -->
+    <script src="vendor/codemirror/codemirror-bundle.min.js"></script>
     <script src="app.js"></script>
   </body>
 </html>
