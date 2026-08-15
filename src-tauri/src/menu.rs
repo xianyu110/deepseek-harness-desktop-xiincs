@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use tauri::menu::{CheckMenuItem, Menu, MenuItem};
+use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 #[cfg(target_os = "macos")]
 use tauri::menu::Submenu;
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -28,7 +28,25 @@ pub fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     let open_data_dir = MenuItem::with_id(app, MENU_OPEN_DATA_DIR, "打开数据目录 (~/.dsh)", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, MENU_QUIT, "退出", true, None::<&str>)?;
     let file = Submenu::with_items(app, "文件", true, &[&open_browser, &restart, &open_data_dir, &quit])?;
-    Ok(Menu::with_items(app, &[&file])?)
+    // macOS 上 Cmd+C / Cmd+V / Cmd+X / Cmd+A 等快捷键必须由菜单中的标准
+    // "编辑"项提供（通过 responder chain 分发到 WebView），缺少它们会导致
+    // 剪切/复制/粘贴失效。PredefinedMenuItem 的角色项会自动带上正确的
+    // 快捷键与选择器，无需手动注册处理逻辑。
+    let edit = Submenu::with_items(
+        app,
+        "编辑",
+        true,
+        &[
+            &PredefinedMenuItem::undo(app, None)?,
+            &PredefinedMenuItem::redo(app, None)?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::cut(app, None)?,
+            &PredefinedMenuItem::copy(app, None)?,
+            &PredefinedMenuItem::paste(app, None)?,
+            &PredefinedMenuItem::select_all(app, None)?,
+        ],
+    )?;
+    Ok(Menu::with_items(app, &[&file, &edit])?)
 }
 
 /// Builds the tray icon/menu and returns the autostart toggle's
