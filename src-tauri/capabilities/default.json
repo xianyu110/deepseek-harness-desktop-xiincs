@@ -3,5 +3,10 @@
   "identifier": "default",
   "description": "Capabilities for the local boot page in the main window. The remote dsh page (http://127.0.0.1:<port>) is never granted IPC access.",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": [
+    "core:default",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-close"
+  ]
 }

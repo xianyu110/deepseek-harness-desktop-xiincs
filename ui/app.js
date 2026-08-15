@@ -5,6 +5,7 @@
 // and browsers don't propagate it into a cross-origin nested iframe.
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
+const { getCurrentWindow } = window.__TAURI__.window;
 
 const els = {
   starting: document.getElementById("state-starting"),
@@ -32,6 +33,9 @@ const els = {
   btnPanelRefresh: document.getElementById("btn-panel-refresh"),
   resizePanelContent: document.getElementById("resize-panel-content"),
   btnToolbarFiles: document.getElementById("btn-toolbar-files"),
+  btnWinMinimize: document.getElementById("btn-win-minimize"),
+  btnWinMaximize: document.getElementById("btn-win-maximize"),
+  btnWinClose: document.getElementById("btn-win-close"),
   btnFilesCollapse: document.getElementById("btn-files-collapse"),
   cardFiles: document.getElementById("card-files"),
   cardFile: document.getElementById("card-file"),
@@ -130,6 +134,38 @@ async function refresh() {
   }
 }
 
+// ── window controls (frameless window) ──────────────────────────────────
+//
+// decorations:false in tauri.conf.json removes the OS title bar entirely;
+// #toolbar carries data-tauri-drag-region (see index.html) so its own empty
+// space still moves the window, and these three buttons stand in for the
+// native minimize/maximize/close the OS would otherwise have drawn.
+// lib.rs's on_window_event CloseRequested handler (hide-to-tray) is keyed
+// off the window-close request itself, not off which button drew it — so
+// appWindow.close() below re-enters that exact same Rust-side path with
+// nothing to change there.
+
+const appWindow = getCurrentWindow();
+
+const ICON_MAXIMIZE =
+  '<svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><rect x="0.5" y="0.5" width="9" height="9" fill="none" stroke="currentColor"/></svg>';
+const ICON_RESTORE =
+  '<svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true"><rect x="3" y="0.5" width="6.5" height="6.5" fill="none" stroke="currentColor"/><rect x="0.5" y="3" width="6.5" height="6.5" fill="none" stroke="currentColor"/></svg>';
+
+async function syncMaximizeIcon() {
+  const maximized = await appWindow.isMaximized();
+  els.btnWinMaximize.innerHTML = maximized ? ICON_RESTORE : ICON_MAXIMIZE;
+  els.btnWinMaximize.title = maximized ? "还原" : "最大化";
+}
+
+function initWindowControls() {
+  els.btnWinMinimize.addEventListener("click", () => appWindow.minimize());
+  els.btnWinMaximize.addEventListener("click", () => appWindow.toggleMaximize());
+  els.btnWinClose.addEventListener("click", () => appWindow.close());
+  syncMaximizeIcon();
+  appWindow.onResized(syncMaximizeIcon);
+}
+
 // ── resizable dock width ────────────────────────────────────────────────
 //
 // One draggable, persisted split: the dock (#panel, now right-docked)
@@ -215,6 +251,33 @@ const GIT_STATUS_CLASS = {
   untracked: "git-untracked",
 };
 
+// One-letter badge text, paired with GIT_STATUS_CLASS for color (see
+// renderTreeNode) — VS Code's own convention, and a second, non-color-only
+// encoding of the same status the row's text tint already carries.
+const GIT_STATUS_LETTER = {
+  modified: "M",
+  added: "A",
+  deleted: "D",
+  untracked: "U",
+};
+
+// `name` is always a call-site literal naming a <symbol> in the sprite
+// (index.html), never derived from file/path data — safe to build via
+// innerHTML since nothing here is untrusted input.
+//
+// `cls` must land on the <svg> itself, not a wrapping element: an <svg>
+// with no width/height/viewBox of its own falls back to the UA default
+// intrinsic size (300×150) regardless of how a parent is sized, since
+// sizing a container doesn't scale unsized replaced content inside it. The
+// static icons elsewhere in index.html already put their class directly on
+// <svg> for this reason — this mirrors that instead of introducing a second
+// (broken) pattern.
+function iconEl(name, cls) {
+  const wrap = document.createElement("span");
+  wrap.innerHTML = `<svg class="${cls}"><use href="#icon-${name}"></use></svg>`;
+  return wrap.firstElementChild;
+}
+
 // "" is the sentinel for "auto-follow" in the <select> — never a real
 // filesystem path, so it can't collide with an actual workspace's value.
 const AUTO_OPTION_VALUE = "";
@@ -236,17 +299,45 @@ function renderTreeNode(entry, gitMap, container) {
   if (status && GIT_STATUS_CLASS[status]) row.classList.add(GIT_STATUS_CLASS[status]);
   if (!entry.isDir && entry.path === currentPreviewPath) row.classList.add("tree-row-selected");
 
+  const hasChildren = entry.isDir && entry.children;
+  // Directories get a real disclosure caret (rotated via .tree-expanded,
+  // see styles.css); files get an equal-width blank spacer — a genuinely
+  // empty element, not a caret icon in a differently-colored class, so
+  // there's no icon to inherit stray color from — so a file's own icon
+  // still lines up in the same column as its siblings' carets rather than
+  // sitting one indent level to the left of them.
+  if (hasChildren) {
+    row.appendChild(iconEl("chevron-right", "tree-caret"));
+    row.classList.add("tree-expanded"); // matches .tree-children's default (un-collapsed) state
+  } else {
+    const spacer = document.createElement("span");
+    spacer.className = "tree-caret-spacer";
+    row.appendChild(spacer);
+  }
+  row.appendChild(iconEl(entry.isDir ? "folder" : "file", "tree-icon"));
+
   const label = document.createElement("span");
   label.className = "tree-label";
-  label.textContent = (entry.isDir ? "📁 " : "📄 ") + entry.name;
+  label.textContent = entry.name;
   row.appendChild(label);
+
+  if (status && GIT_STATUS_LETTER[status]) {
+    const badge = document.createElement("span");
+    badge.className = "git-badge";
+    badge.textContent = GIT_STATUS_LETTER[status];
+    row.appendChild(badge);
+  }
+
   container.appendChild(row);
 
-  if (entry.isDir && entry.children) {
+  if (hasChildren) {
     const childWrap = document.createElement("div");
     childWrap.className = "tree-children";
     container.appendChild(childWrap);
-    row.addEventListener("click", () => childWrap.classList.toggle("collapsed"));
+    row.addEventListener("click", () => {
+      const collapsed = childWrap.classList.toggle("collapsed");
+      row.classList.toggle("tree-expanded", !collapsed);
+    });
     for (const child of entry.children) {
       renderTreeNode(child, gitMap, childWrap);
     }
@@ -505,6 +596,16 @@ async function refreshCurrentPreview() {
   try {
     const preview = await invoke("get_editable_preview", { path, overridePath: lockedWorkspace });
     if (currentPreviewPath !== path) return;
+    // Skip the remount when the fetched text is identical to what's already
+    // mounted — the common case on every 6s tick. mountEditor() always tears
+    // down and recreates the CodeMirror instance, resetting cursor/scroll to
+    // the start of the doc; without this check that fired every tick even
+    // when nothing had changed, silently yanking the cursor back to
+    // position 0 right as the user clicked in to place it, before typing
+    // anything (isDirty() alone doesn't catch that moment — content is
+    // still identical to currentSavedContent until the first keystroke).
+    const freshText = contentTextOrNull(preview.current);
+    if (freshText !== null && freshText === currentSavedContent) return;
     mountEditor(path, preview);
   } catch {
     /* leave whatever's already showing rather than blanking it over a transient poll failure */
@@ -649,6 +750,7 @@ const PANEL_POLL_MS = 6000;
 async function init() {
   applyPanelWidth();
   initResizeHandle();
+  initWindowControls();
 
   try {
     const info = await invoke("get_info");
@@ -691,7 +793,9 @@ async function init() {
   // card scrolls/collapses on its own" design.
   els.btnFilesCollapse.addEventListener("click", () => {
     const collapsed = els.cardFiles.classList.toggle("card-collapsed");
-    els.btnFilesCollapse.textContent = collapsed ? "⌄" : "⌃";
+    els.btnFilesCollapse
+      .querySelector("use")
+      .setAttribute("href", collapsed ? "#icon-chevron-down" : "#icon-chevron-up");
   });
   els.btnPanelRefresh.addEventListener("click", refreshPanel);
   els.panelWorkspaceSelect.addEventListener("change", () => {

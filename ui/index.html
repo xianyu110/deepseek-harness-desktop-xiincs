@@ -7,20 +7,94 @@
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <div id="app-shell">
-      <div id="main-column">
-        <div id="toolbar">
-          <div class="toolbar-brand">
-            <img src="logo.svg" alt="" aria-hidden="true" />
-            <span>DeepSeek Harness</span>
-          </div>
-          <div id="toolbar-actions">
-            <button id="btn-toolbar-terminal" class="toolbar-btn" disabled title="终端（即将推出）">⌘_</button>
-            <button id="btn-toolbar-diff" class="toolbar-btn" disabled title="Diff（即将推出）">◫</button>
-            <button id="btn-toolbar-files" class="toolbar-btn" title="文件">🗂</button>
-          </div>
-        </div>
+    <!--
+      One sprite sheet, referenced by <use> everywhere an icon is needed
+      (toolbar, dock headers, file tree rows) instead of duplicating path
+      data per instance — a tree with hundreds of rows would otherwise repeat
+      a full <path> on every single one. Hand-picked minimal line icons
+      (Feather's shapes, redrawn inline — no runtime dependency), replacing
+      the emoji/dingbat glyphs (⌘_ ◫ 🗂 📁 📄 ⟳ ⌃) the shell used to lean on,
+      which rendered as a mix of full-color emoji and monochrome text glyphs
+      with no shared visual weight.
+    -->
+    <svg id="icon-sprite" aria-hidden="true" style="position: absolute; width: 0; height: 0; overflow: hidden">
+      <symbol id="icon-terminal" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="4 17 10 11 4 5"></polyline>
+        <line x1="12" y1="19" x2="20" y2="19"></line>
+      </symbol>
+      <symbol id="icon-columns" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="3" width="18" height="18" rx="2"></rect>
+        <line x1="12" y1="3" x2="12" y2="21"></line>
+      </symbol>
+      <symbol id="icon-folder" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+      </symbol>
+      <symbol id="icon-file" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+        <polyline points="14 2 14 8 20 8"></polyline>
+      </symbol>
+      <symbol id="icon-refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="23 4 23 10 17 10"></polyline>
+        <polyline points="1 20 1 14 7 14"></polyline>
+        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+      </symbol>
+      <symbol id="icon-chevron-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="9 18 15 12 9 6"></polyline>
+      </symbol>
+      <symbol id="icon-chevron-up" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="18 15 12 9 6 15"></polyline>
+      </symbol>
+      <symbol id="icon-chevron-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="6 9 12 15 18 9"></polyline>
+      </symbol>
+    </svg>
 
+    <div id="app-shell">
+      <!--
+        No brand lockup here on purpose — the iframed harness content
+        already renders its own logo/title, so the shell chrome doesn't
+        repeat it. data-tauri-drag-region makes this bar's own empty space
+        (most of its width) move the window, replacing the OS title bar
+        decorations:false removes — see #window-controls below for its
+        replacement minimize/maximize/close.
+
+        A direct child of #app-shell (not nested inside the row below), so
+        it always spans the full window width regardless of whether the
+        Files dock is open — #window-controls stays flush against the real
+        right edge instead of just the edge of whatever's left of the dock.
+      -->
+      <div id="toolbar" data-tauri-drag-region>
+        <div id="toolbar-actions">
+          <button id="btn-toolbar-terminal" class="toolbar-btn" disabled title="终端（即将推出）">
+            <svg class="icon"><use href="#icon-terminal"></use></svg>
+          </button>
+          <button id="btn-toolbar-diff" class="toolbar-btn" disabled title="Diff（即将推出）">
+            <svg class="icon"><use href="#icon-columns"></use></svg>
+          </button>
+          <button id="btn-toolbar-files" class="toolbar-btn" title="文件">
+            <svg class="icon"><use href="#icon-folder"></use></svg>
+          </button>
+        </div>
+        <div id="window-controls">
+          <button id="btn-win-minimize" class="window-btn" title="最小化">
+            <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true">
+              <path d="M0 5h10" stroke="currentColor" stroke-width="1" />
+            </svg>
+          </button>
+          <button id="btn-win-maximize" class="window-btn" title="最大化">
+            <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true">
+              <rect x="0.5" y="0.5" width="9" height="9" fill="none" stroke="currentColor" stroke-width="1" />
+            </svg>
+          </button>
+          <button id="btn-win-close" class="window-btn window-btn-close" title="关闭">
+            <svg viewBox="0 0 10 10" width="10" height="10" aria-hidden="true">
+              <path d="M0 0l10 10M10 0L0 10" stroke="currentColor" stroke-width="1" />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <div id="shell-body">
         <div id="content">
           <!-- update available (non-blocking banner, any state) -->
           <div id="update-banner" class="update-banner hidden">
@@ -68,42 +142,48 @@
 
           <iframe id="harness-frame" class="hidden" title="DeepSeek Harness"></iframe>
         </div>
+
+        <div id="resize-panel-content" class="resize-handle hidden" role="separator" aria-orientation="vertical"></div>
+
+        <aside id="panel" class="hidden">
+          <div id="panel-cards">
+            <section id="card-files" class="dock-card">
+              <div class="dock-card-header">
+                <span class="dock-card-title">文件</span>
+                <div class="dock-card-actions">
+                  <button id="btn-panel-refresh" title="刷新文件树与 Git 状态">
+                    <svg class="icon"><use href="#icon-refresh"></use></svg>
+                  </button>
+                  <button id="btn-files-collapse" title="收起">
+                    <svg class="icon"><use href="#icon-chevron-up"></use></svg>
+                  </button>
+                </div>
+              </div>
+              <div class="select-wrap">
+                <select id="panel-workspace-select" title="选择要在文件树中查看的工作区"></select>
+                <svg class="select-chevron"><use href="#icon-chevron-down"></use></svg>
+              </div>
+              <div id="panel-tree"></div>
+            </section>
+
+            <section id="card-file" class="dock-card hidden">
+              <div class="dock-card-header">
+                <div id="panel-preview-title-group">
+                  <span id="panel-preview-title"></span>
+                  <span id="panel-preview-dirty-dot" class="hidden" title="有未保存的改动">●</span>
+                </div>
+                <div class="dock-card-actions">
+                  <button id="btn-preview-revert" class="hidden" title="放弃改动，还原为已保存内容">还原</button>
+                  <button id="btn-preview-save" class="hidden" title="保存改动 (Ctrl+S)">保存</button>
+                  <button id="btn-preview-close" title="关闭预览">✕</button>
+                </div>
+              </div>
+              <div id="panel-preview-body"></div>
+            </section>
+          </div>
+          <footer id="footer"></footer>
+        </aside>
       </div>
-
-      <div id="resize-panel-content" class="resize-handle hidden" role="separator" aria-orientation="vertical"></div>
-
-      <aside id="panel" class="hidden">
-        <div id="panel-cards">
-          <section id="card-files" class="dock-card">
-            <div class="dock-card-header">
-              <span class="dock-card-title">Files</span>
-              <div class="dock-card-actions">
-                <button id="btn-panel-refresh" title="刷新文件树与 Git 状态">⟳</button>
-                <button id="btn-files-collapse" title="收起">⌃</button>
-              </div>
-            </div>
-            <select id="panel-workspace-select" title="选择要在文件树中查看的工作区"></select>
-            <div id="panel-tree"></div>
-          </section>
-
-          <section id="card-file" class="dock-card hidden">
-            <div class="dock-card-header">
-              <div id="panel-preview-title-group">
-                <span class="dock-card-title">File</span>
-                <span id="panel-preview-title"></span>
-                <span id="panel-preview-dirty-dot" class="hidden" title="有未保存的改动">●</span>
-              </div>
-              <div class="dock-card-actions">
-                <button id="btn-preview-revert" class="hidden" title="放弃改动，还原为已保存内容">还原</button>
-                <button id="btn-preview-save" class="hidden" title="保存改动 (Ctrl+S)">保存</button>
-                <button id="btn-preview-close" title="关闭预览">✕</button>
-              </div>
-            </div>
-            <div id="panel-preview-body"></div>
-          </section>
-        </div>
-        <footer id="footer"></footer>
-      </aside>
     </div>
     <!--
       A real code editor (CodeMirror 6), not a highlighter + textarea +
