@@ -56,46 +56,178 @@ body {
   color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB",
     "Microsoft YaHei", "Helvetica Neue", Helvetica, Arial, sans-serif;
-  display: flex;
-  align-items: center;
-  justify-content: center;
   user-select: none;
 }
 
-#app {
-  width: min(560px, 90vw);
+#app-shell {
+  display: flex;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
 }
 
-.brand {
+/* ── panel: persistent brand anchor + file/git tree ── */
+
+#panel {
+  width: 280px;
+  flex-shrink: 0;
+  background: var(--sidebar-bg);
+  border-right: 1px solid var(--card-border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+#panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px 10px;
+  flex-shrink: 0;
+}
+
+.panel-brand {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text);
+  overflow: hidden;
+}
+
+.panel-brand img {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+.panel-brand span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#btn-panel-refresh {
+  background: transparent;
+  border: none;
+  padding: 4px 8px;
+  border-radius: 999px;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+#btn-panel-refresh:hover {
+  background: var(--btn-hover-bg);
+}
+
+#panel-workspace-name {
+  padding: 0 16px 12px;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--card-border);
+  margin-bottom: 4px;
+}
+
+#panel-tree {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 8px;
+  font-size: 12.5px;
+  user-select: text;
+}
+
+.panel-empty {
+  padding: 8px;
+  font-size: 12px;
+}
+
+.tree-row {
+  padding: 3px 8px;
+  border-radius: 6px;
+  cursor: default;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tree-dir {
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.tree-row:hover {
+  background: var(--btn-hover-bg);
+}
+
+.tree-children {
+  margin-left: 14px;
+}
+
+.tree-children.collapsed {
+  display: none;
+}
+
+/* Color alone doesn't carry the deleted signal — strikethrough backs it up. */
+.tree-row.git-modified .tree-label {
+  color: var(--accent);
+}
+.tree-row.git-added .tree-label {
+  color: var(--success-text);
+}
+.tree-row.git-deleted .tree-label {
+  color: var(--danger);
+  text-decoration: line-through;
+  opacity: 0.75;
+}
+.tree-row.git-untracked .tree-label {
+  color: var(--muted);
+  font-style: italic;
+}
+
+#footer {
+  padding: 10px 16px 14px;
+  border-top: 1px solid var(--card-border);
+  font-size: 10.5px;
+  color: var(--muted);
+  user-select: text;
+  word-break: break-all;
+}
+
+/* ── content: the iframe, or a boot/error card centered over it ── */
+
+#content {
+  flex: 1;
+  min-width: 0;
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
-  margin-bottom: 24px;
+  background: var(--bg);
 }
 
-.brand img {
-  width: 28px;
-  height: 28px;
+#harness-frame {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: none;
 }
 
-.brand-word {
-  font-size: 20px;
-  font-weight: 700;
-  letter-spacing: -0.01em;
-}
-
-.brand-badge {
-  background: #0f1115;
-  color: #fff;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  padding: 2px 7px;
-  border-radius: 6px;
+#harness-frame.hidden {
+  display: none;
 }
 
 .card {
+  /* Previously constrained by the now-removed #app wrapper it lived inside;
+     owning the width itself is the more correct home for it regardless —
+     it's a property of "how wide should a card render," not of whatever
+     happens to contain one. */
+  width: min(560px, 90vw);
   background: var(--card);
   border: 1px solid var(--card-border);
   box-shadow: var(--card-shadow);
@@ -225,12 +357,22 @@ button:disabled {
 }
 
 /* update banner */
+/* A direct child of #content now (sibling of the boot/error cards and the
+   iframe) rather than stacked in a single narrow column — floats over
+   whichever of those is currently showing, since an update notice shouldn't
+   hide just because the harness iframe is active. */
 .update-banner {
-  margin-top: 18px;
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  width: min(560px, 90vw);
   padding: 12px 16px;
   background: var(--accent-tint-bg);
   border: 1px solid transparent;
   border-radius: 16px;
+  box-shadow: var(--card-shadow);
   display: flex;
   align-items: center;
   justify-content: space-between;

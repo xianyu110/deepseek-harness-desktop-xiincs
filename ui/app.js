@@ -1,15 +1,16 @@
-// Local boot page for dsh-desktop: loading / error / retry states.
-// Talks to the Rust shell through Tauri IPC. The harness page itself
-// (http://127.0.0.1:<port>) never gets IPC access.
+// Container page for dsh-desktop: hosts the harness UI in an <iframe> and
+// renders the native file/git panel beside it. Talks to the Rust shell
+// through Tauri IPC. The harness content inside the iframe never gets IPC
+// access — window.__TAURI__ is injected into this top-level document only,
+// and browsers don't propagate it into a cross-origin nested iframe.
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 
 const els = {
   starting: document.getElementById("state-starting"),
-  running: document.getElementById("state-running"),
   error: document.getElementById("state-error"),
+  harnessFrame: document.getElementById("harness-frame"),
   startingDetail: document.getElementById("starting-detail"),
-  runningUrl: document.getElementById("running-url"),
   errorMessage: document.getElementById("error-message"),
   logBox: document.getElementById("log-box"),
   logBoxStarting: document.getElementById("log-box-starting"),
@@ -25,13 +26,15 @@ const els = {
   btnUpdateDismiss: document.getElementById("btn-update-dismiss"),
   providerTip: document.getElementById("provider-tip"),
   btnProviderTipDismiss: document.getElementById("btn-provider-tip-dismiss"),
+  panelWorkspaceName: document.getElementById("panel-workspace-name"),
+  panelTree: document.getElementById("panel-tree"),
+  btnPanelRefresh: document.getElementById("btn-panel-refresh"),
 };
 
 // Shown once (best-effort) during the first-ever boot wait, so new users
 // discover the existing Settings → 模型 → 添加提供方 flow without us having
-// to touch the harness page itself (it's a remote page with zero IPC access
-// — see main.rs). Purely informational: never blocks or delays navigation to
-// the harness UI once the server is ready.
+// to touch the harness page itself (it's iframed content with zero IPC
+// access — see lib.rs).
 const PROVIDER_TIP_DISMISSED_KEY = "dsh-desktop-provider-tip-dismissed";
 
 function initProviderTip() {
@@ -47,9 +50,10 @@ let logsVisible = false;
 let logsStartingVisible = false;
 
 function show(id) {
-  for (const key of ["starting", "running", "error"]) {
+  for (const key of ["starting", "error"]) {
     els[key].classList.toggle("hidden", key !== id);
   }
+  els.harnessFrame.classList.toggle("hidden", id !== "running");
 }
 
 async function loadLogsInto(box) {
@@ -79,7 +83,8 @@ function render(status) {
   switch (status.state) {
     case "running":
       show("running");
-      els.runningUrl.textContent = status.url;
+      els.harnessFrame.src = status.url;
+      refreshPanel();
       break;
     case "starting":
     case "idle":
@@ -88,12 +93,14 @@ function render(status) {
       break;
     case "stopped":
       show("error");
+      els.harnessFrame.src = "about:blank";
       els.errorMessage.textContent =
         `服务已停止（exit ${status.code ?? "?"}）。` +
         (status.message ? `\n${status.message}` : "");
       break;
     case "error":
       show("error");
+      els.harnessFrame.src = "about:blank";
       els.errorMessage.textContent = status.message || "未知错误";
       break;
     default:
@@ -111,6 +118,67 @@ async function refresh() {
   }
 }
 
+// ── file/git panel ───────────────────────────────────────────────────────
+
+const GIT_STATUS_CLASS = {
+  modified: "git-modified",
+  added: "git-added",
+  deleted: "git-deleted",
+  untracked: "git-untracked",
+};
+
+function renderTreeNode(entry, gitMap, container) {
+  const row = document.createElement("div");
+  row.className = "tree-row" + (entry.isDir ? " tree-dir" : " tree-file");
+  const status = gitMap.get(entry.path);
+  if (status && GIT_STATUS_CLASS[status]) row.classList.add(GIT_STATUS_CLASS[status]);
+
+  const label = document.createElement("span");
+  label.className = "tree-label";
+  label.textContent = (entry.isDir ? "📁 " : "📄 ") + entry.name;
+  row.appendChild(label);
+  container.appendChild(row);
+
+  if (entry.isDir && entry.children) {
+    const childWrap = document.createElement("div");
+    childWrap.className = "tree-children";
+    container.appendChild(childWrap);
+    row.addEventListener("click", () => childWrap.classList.toggle("collapsed"));
+    for (const child of entry.children) {
+      renderTreeNode(child, gitMap, childWrap);
+    }
+  }
+}
+
+async function refreshPanel() {
+  try {
+    const [tree, gitEntries] = await Promise.all([invoke("get_workspace_tree"), invoke("get_git_status")]);
+    const gitMap = new Map(gitEntries.map((e) => [e.path, e.status]));
+    els.panelTree.replaceChildren();
+    if (tree.length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "muted panel-empty";
+      empty.textContent = "空工作区";
+      els.panelTree.appendChild(empty);
+      return;
+    }
+    for (const entry of tree) {
+      renderTreeNode(entry, gitMap, els.panelTree);
+    }
+  } catch (err) {
+    els.panelTree.textContent = `无法加载文件树: ${err}`;
+  }
+}
+
+// Cheap enough (one directory walk + one `git status`) to poll rather than
+// stand up a real filesystem watcher for this first slice — see the plan
+// note on deferring that complexity. Cleared on nothing; the container page
+// itself is never torn down, so this interval simply runs for the app's
+// whole lifetime.
+const PANEL_POLL_MS = 6000;
+
+// ── init ─────────────────────────────────────────────────────────────────
+
 async function init() {
   try {
     const info = await invoke("get_info");
@@ -119,6 +187,10 @@ async function init() {
     if (info.nodePath) bits.push(`Node ${info.nodePath}`);
     if (info.dshHome) bits.push(`数据目录 ${info.dshHome}`);
     els.footer.textContent = bits.join(" · ");
+    if (info.workspaceDir) {
+      els.panelWorkspaceName.textContent = info.workspaceDir;
+      els.panelWorkspaceName.title = info.workspaceDir;
+    }
   } catch {
     /* footer is cosmetic */
   }
@@ -147,6 +219,7 @@ async function init() {
   els.btnLogs.addEventListener("click", toggleLogs);
   els.btnLogsStarting.addEventListener("click", toggleLogsStarting);
   els.btnOpenBrowser.addEventListener("click", () => invoke("open_in_browser"));
+  els.btnPanelRefresh.addEventListener("click", refreshPanel);
 
   els.btnUpdateDismiss.addEventListener("click", () => {
     els.updateBanner.classList.add("hidden");
@@ -167,7 +240,9 @@ async function init() {
   checkForUpdate();
   initProviderTip();
 
+  setInterval(refreshPanel, PANEL_POLL_MS);
   await refresh();
+  await refreshPanel();
 }
 
 async function checkForUpdate() {

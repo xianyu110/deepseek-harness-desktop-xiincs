@@ -7,6 +7,7 @@
 //! local boot page.
 
 mod menu;
+mod panel;
 mod server;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -84,8 +85,20 @@ fn restart_server(app: AppHandle, state: State<'_, AppState>) -> Result<(), Stri
 #[tauri::command]
 fn stop_server(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     server::stop(&state.server);
-    server::navigate_boot(&app, &state.server);
+    server::set_stopped(&app, &state.server);
     Ok(())
+}
+
+#[tauri::command]
+fn get_workspace_tree(app: AppHandle) -> Vec<panel::TreeEntry> {
+    let root = server::workspace_dir(&app);
+    panel::list_workspace_tree(&root)
+}
+
+#[tauri::command]
+fn get_git_status(app: AppHandle) -> Vec<panel::GitEntry> {
+    let root = server::workspace_dir(&app);
+    panel::git_status(&root)
 }
 
 #[tauri::command]
@@ -413,7 +426,9 @@ pub fn run() {
             open_in_browser,
             open_data_dir,
             check_for_update,
-            install_update
+            install_update,
+            get_workspace_tree,
+            get_git_status
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -428,12 +443,12 @@ pub fn run() {
             // autostart checkbox it needs to be constructed with.
             let srv = Arc::new(Mutex::new(DshServer::default()));
 
-            // Remember the local boot page URL so we can navigate back to it
-            // when the server stops unexpectedly.
+            // The container page (ui/) hosts the harness in an <iframe> and
+            // never navigates its own top level — these WebView2-level
+            // settings hold for its whole lifetime, including content
+            // rendered inside that iframe (ContextMenuRequested and the
+            // zoom/DevTools settings are control-level, not frame-level).
             if let Some(win) = app.get_webview_window("main") {
-                if let Ok(url) = win.url() {
-                    srv.lock().unwrap().boot_url = Some(url.to_string());
-                }
                 disable_context_menu(&win);
                 disable_zoom_control(&win);
                 disable_devtools(&win);

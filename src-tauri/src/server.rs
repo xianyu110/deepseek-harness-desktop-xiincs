@@ -96,7 +96,6 @@ pub enum ServerStatus {
 pub struct DshServer {
     pub status: ServerStatus,
     pub logs: VecDeque<String>,
-    pub boot_url: Option<String>,
     pid: Option<u32>,
     install_pid: Option<u32>,
     requested_stop: bool,
@@ -110,7 +109,6 @@ impl Default for DshServer {
         Self {
             status: ServerStatus::Idle,
             logs: VecDeque::new(),
-            boot_url: None,
             pid: None,
             install_pid: None,
             requested_stop: false,
@@ -184,8 +182,9 @@ fn env_nonempty(name: &str) -> Option<String> {
 
 /// Tauri's `PathResolver` returns verbatim (`\\?\C:\...`) paths on Windows.
 /// Node.js chokes on those for module resolution, so convert to the plain
-/// `C:\...` form before passing anything to a child process.
-fn plain_win_path(p: &Path) -> String {
+/// `C:\...` form before passing anything to a child process. `pub(crate)`:
+/// `panel.rs` reuses this for the `git` subprocess it shells out to.
+pub(crate) fn plain_win_path(p: &Path) -> String {
     let s = p.to_string_lossy();
     if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
         format!(r"\\{rest}")
@@ -292,11 +291,11 @@ fn own_process_group(_cmd: &mut Command) {}
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 #[cfg(windows)]
-fn hide_console(cmd: &mut Command) {
+pub(crate) fn hide_console(cmd: &mut Command) {
     cmd.creation_flags(CREATE_NO_WINDOW);
 }
 #[cfg(not(windows))]
-fn hide_console(_cmd: &mut Command) {}
+pub(crate) fn hide_console(_cmd: &mut Command) {}
 
 /// Kill a process and its full descendant tree. Windows uses `taskkill /T
 /// /F`, which walks the tree via the OS's own parent-process tracking and
@@ -622,25 +621,37 @@ fn set_running(app: &AppHandle, server: &Shared, url: &str) {
             url: url.to_string(),
         },
     );
-    if let Some(win) = app.get_webview_window("main") {
-        let _ = win.navigate(url.parse().expect("valid http url"));
-    }
+    // The container page (ui/) never navigates away — it points an <iframe>
+    // at this URL itself, in reaction to the event just emitted above. See
+    // the iframe-based layout note on `DshServer` below for why this
+    // replaced a `win.navigate()` call to the harness URL.
 }
 
-pub fn navigate_boot(app: &AppHandle, server: &Shared) {
-    let boot = server.lock().unwrap().boot_url.clone();
-    if let Some(url) = boot {
-        if let Some(win) = app.get_webview_window("main") {
-            let _ = win.navigate(url.parse().expect("valid boot url"));
-        }
-    }
+/// Marks the server stopped and notifies the container page. Used by the
+/// `stop_server` command: previously, `stop()` alone left `status` stale
+/// until an exit-watcher thread eventually reaped the killed process — that
+/// staleness was masked by a forced `win.navigate()` back to the boot page,
+/// which reloaded fresh JS that would soon re-poll and catch up. Now that
+/// the container page is never reloaded (it hosts the harness in an
+/// `<iframe>` instead of navigating its own top level), that reload no
+/// longer happens to paper over the gap, so this sets the real status
+/// directly instead.
+pub fn set_stopped(app: &AppHandle, server: &Shared) {
+    set_status(app, server, ServerStatus::Stopped { code: None, message: None });
+}
+
+/// The workspace directory the server — and this shell's own
+/// workspace-aware features (the file/git panel in `panel.rs`) — operate on:
+/// `DSH_DESKTOP_CWD` if set, else the user's home directory.
+pub(crate) fn workspace_dir(app: &AppHandle) -> PathBuf {
+    env_nonempty("DSH_DESKTOP_CWD")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| resolve_home(app))
 }
 
 /// Spawn the server process and start its reader/exit-watcher threads.
 fn spawn(app: &AppHandle, server: &Shared, node: &str, bin: &str, port: u16) -> Result<(), String> {
-    let cwd = env_nonempty("DSH_DESKTOP_CWD")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| resolve_home(app));
+    let cwd = workspace_dir(app);
     let cwd_plain = plain_win_path(&cwd);
     fs::create_dir_all(&cwd).map_err(|e| format!("无法创建工作目录 {}: {e}", cwd.display()))?;
 
@@ -776,7 +787,6 @@ fn spawn(app: &AppHandle, server: &Shared, node: &str, bin: &str, port: u16) -> 
                 s.status = status.clone();
             }
             let _ = app3.emit("server-status", status);
-            navigate_boot(&app3, &srv4);
         }
     });
 
@@ -935,6 +945,7 @@ pub fn info(app: &AppHandle, server: &Shared) -> serde_json::Value {
         "binPath": bin.unwrap_or_default(),
         "dshHome": dsh_home_dir(app).to_string_lossy(),
         "runtimeDir": runtime_dir(app).to_string_lossy(),
+        "workspaceDir": workspace_dir(app).to_string_lossy(),
     })
 }
 
