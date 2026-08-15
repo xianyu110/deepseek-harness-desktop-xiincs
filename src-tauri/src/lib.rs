@@ -385,6 +385,90 @@ fn disable_devtools(win: &tauri::WebviewWindow) {
 #[cfg(not(all(windows, not(debug_assertions))))]
 fn disable_devtools(_win: &tauri::WebviewWindow) {}
 
+/// Routes every outbound `http(s)` link — `target="_blank"`/`window.open`
+/// (`NewWindowRequested`) and plain top-level navigation
+/// (`NavigationStarting`) alike — to the system's default browser instead of
+/// the embedded WebView2. Without a `NewWindowRequested` handler, WebView2's
+/// default popup blocker (`IsDefaultPopupBlockerEnabled`, on by default)
+/// silently swallows `target="_blank"` clicks — the harness page renders its
+/// message/document links that way, so external links otherwise do nothing
+/// at all. Without a `NavigationStarting` handler, a plain (non-`_blank`)
+/// outbound link would instead navigate the WebView's top level away from
+/// the harness UI, with no in-app way back (see `disable_context_menu`'s
+/// doc comment on why "back" is removed from the context menu). Handling
+/// both here keeps that decision entirely shell-side — it never depends on
+/// or routes through the dsh web server. Same one-time-at-setup reasoning as
+/// `disable_context_menu`: `CoreWebView2` event registrations, not per-page
+/// ones, so they hold across every later `navigate()` call.
+///
+/// `127.0.0.1`/`localhost` URLs are left alone in both handlers — that's the
+/// harness's own page loading, not an outbound link.
+#[cfg(windows)]
+fn install_external_link_handlers(app: &AppHandle, win: &tauri::WebviewWindow) {
+    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Controller;
+    use webview2_com::{take_pwstr, NavigationStartingEventHandler, NewWindowRequestedEventHandler};
+    use windows::core::PWSTR;
+
+    fn is_external_http(uri: &str) -> bool {
+        (uri.starts_with("http://") || uri.starts_with("https://"))
+            && !uri.contains("127.0.0.1")
+            && !uri.contains("localhost")
+    }
+
+    let app_new_window = app.clone();
+    let app_navigation = app.clone();
+    let _ = win.with_webview(move |webview| {
+        let controller: ICoreWebView2Controller = webview.controller();
+        let result: windows::core::Result<()> = (|| unsafe {
+            let core = controller.CoreWebView2()?;
+
+            let mut token_new_window = Default::default();
+            core.add_NewWindowRequested(
+                &NewWindowRequestedEventHandler::create(Box::new(move |_sender, args| {
+                    let Some(args) = args else { return Ok(()) };
+                    let mut uri_ptr = PWSTR::null();
+                    args.Uri(&mut uri_ptr)?;
+                    let uri = take_pwstr(uri_ptr);
+                    if is_external_http(&uri) {
+                        let _ = app_new_window.opener().open_url(uri, None::<&str>);
+                    }
+                    // Handled either way: a bare `SetHandled(false)` still
+                    // leaves the popup blocked (WebView2's default), it just
+                    // stops this handler from being the reason — so the net
+                    // effect without this line is identical to today's
+                    // "point-blank clicks do nothing" bug this exists to fix.
+                    args.SetHandled(true)?;
+                    Ok(())
+                })),
+                &mut token_new_window,
+            )?;
+
+            let mut token_navigation = Default::default();
+            core.add_NavigationStarting(
+                &NavigationStartingEventHandler::create(Box::new(move |_sender, args| {
+                    let Some(args) = args else { return Ok(()) };
+                    let mut uri_ptr = PWSTR::null();
+                    args.Uri(&mut uri_ptr)?;
+                    let uri = take_pwstr(uri_ptr);
+                    if is_external_http(&uri) {
+                        let _ = app_navigation.opener().open_url(uri, None::<&str>);
+                        args.SetCancel(true)?;
+                    }
+                    Ok(())
+                })),
+                &mut token_navigation,
+            )?;
+
+            Ok(())
+        })();
+        if let Err(e) = result {
+            eprintln!("[dsh-desktop] failed to install external link handlers: {e}");
+        }
+    });
+}
+#[cfg(not(windows))]
+fn install_external_link_handlers(_app: &AppHandle, _win: &tauri::WebviewWindow) {}
+
 // ── menu / tray actions ──────────────────────────────────────────────────────
 
 fn handle_menu_action(app: &AppHandle, id: &str) {
@@ -524,6 +608,7 @@ pub fn run() {
                 disable_context_menu(&win);
                 disable_zoom_control(&win);
                 disable_devtools(&win);
+                install_external_link_handlers(&handle, &win);
             }
 
             // A window/app menu set via `set_menu()` becomes the global
