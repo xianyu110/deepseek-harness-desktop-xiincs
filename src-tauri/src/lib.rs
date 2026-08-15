@@ -29,6 +29,18 @@ fn global_show_shortcut() -> Shortcut {
     Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyD)
 }
 
+/// Pulls a usable workspace folder out of launch args — shared by a fresh
+/// launch's own `std::env::args()` and the args a second launch attempt
+/// hands to `tauri_plugin_single_instance`'s relaunch callback below. Skips
+/// the first arg (the exe path itself); returns the first remaining arg
+/// that resolves to an existing directory. This is the shape a Windows
+/// Explorer "open with" shell command entry passes
+/// (`"...\dsh-desktop.exe" "%V"`) — see server.rs's `DSH_DESKTOP_CWD` doc
+/// comment for how it's consumed once resolved.
+fn requested_workspace(args: &[String]) -> Option<std::path::PathBuf> {
+    args.iter().skip(1).map(std::path::PathBuf::from).find(|p| p.is_dir())
+}
+
 use server::{DshServer, ServerStatus};
 
 pub struct AppState {
@@ -300,13 +312,41 @@ fn handle_menu_action(app: &AppHandle, id: &str) {
 // ── app entry ────────────────────────────────────────────────────────────────
 
 pub fn run() {
+    // A folder arg on the *first* launch (e.g. from a Windows Explorer
+    // "open with" shell command entry) picks the workspace the server
+    // starts in — set before anything reads DSH_DESKTOP_CWD. An explicit
+    // env var the user already set wins over this, same precedence as every
+    // other DSH_DESKTOP_* override.
+    if std::env::var("DSH_DESKTOP_CWD").is_err() {
+        let args: Vec<String> = std::env::args().collect();
+        if let Some(dir) = requested_workspace(&args) {
+            std::env::set_var("DSH_DESKTOP_CWD", &dir);
+        }
+    }
+
     tauri::Builder::default()
         // Must be the first plugin registered: it needs to claim the
         // single-instance lock before anything else in the builder chain
         // runs. A second launch (desktop icon, Start menu, ...) hits this
         // callback in the *first* process and exits immediately instead of
         // creating its own window/tray icon — see `show_main_window`.
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            // Deliberately scoped: a folder arg here (second launch, e.g.
+            // right-clicking a *different* folder while the app is already
+            // running) is logged but not acted on. Silently restarting the
+            // server against a new cwd would drop whatever session the
+            // already-open window has live — that's a real UX decision
+            // (new window? confirm first? something else?) this project
+            // doesn't have multi-workspace support to back yet, not
+            // something to improvise here. Focusing the existing window is
+            // still strictly better than doing nothing.
+            if let Some(dir) = requested_workspace(&args) {
+                eprintln!(
+                    "[dsh-desktop] second launch requested workspace {} — \
+                     ignoring (no multi-workspace support yet), focusing existing window",
+                    dir.display()
+                );
+            }
             show_main_window(app);
         }))
         .plugin(tauri_plugin_opener::init())
@@ -417,4 +457,42 @@ pub fn run() {
         .on_menu_event(|app, event| handle_menu_action(app, event.id.as_ref()))
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::requested_workspace;
+
+    #[test]
+    fn finds_first_existing_dir_after_the_exe_path() {
+        let tmp = std::env::temp_dir();
+        let args = vec!["dsh-desktop.exe".to_string(), tmp.display().to_string()];
+        assert_eq!(requested_workspace(&args), Some(tmp));
+    }
+
+    #[test]
+    fn ignores_a_nonexistent_path() {
+        let args = vec![
+            "dsh-desktop.exe".to_string(),
+            "Z:\\definitely\\not\\a\\real\\path\\hopefully".to_string(),
+        ];
+        assert_eq!(requested_workspace(&args), None);
+    }
+
+    #[test]
+    fn no_args_beyond_the_exe_path_finds_nothing() {
+        let args = vec!["dsh-desktop.exe".to_string()];
+        assert_eq!(requested_workspace(&args), None);
+    }
+
+    #[test]
+    fn skips_the_exe_path_itself_even_if_its_directory_exists() {
+        // The exe's own directory is a real, existing dir — make sure we
+        // never mistake arg[0] (the exe path, not a workspace request) for
+        // a workspace request just because its parent happens to exist.
+        let tmp = std::env::temp_dir();
+        let fake_exe = tmp.join("dsh-desktop.exe");
+        let args = vec![fake_exe.display().to_string()];
+        assert_eq!(requested_workspace(&args), None);
+    }
 }
