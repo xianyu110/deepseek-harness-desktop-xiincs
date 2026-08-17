@@ -106,20 +106,36 @@
         <polyline points="22 12 16 12 14 15 10 15 8 12 2 12"></polyline>
         <path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"></path>
       </symbol>
+      <symbol id="icon-arrow-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="12" y1="5" x2="12" y2="19"></line>
+        <polyline points="19 12 12 19 5 12"></polyline>
+      </symbol>
+      <symbol id="icon-arrow-up" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="12" y1="19" x2="12" y2="5"></line>
+        <polyline points="5 12 12 5 19 12"></polyline>
+      </symbol>
     </svg>
 
     <div id="app-shell">
       <!--
-        No brand lockup here on purpose — the iframed harness content
-        already renders its own logo/title, so the shell chrome doesn't
-        repeat it. The hamburger button on the left is the one exception:
-        not a brand mark, just the entry point for actions that have nowhere
-        else to live on Windows/Linux (no native menu bar — see menu.rs's
-        set_menu() macOS-only gate), otherwise reachable only via the tray
-        icon. On Windows/Linux (frameless: decorations:false) this bar
-        carries data-tauri-drag-region so its own empty space moves the
-        window, replacing the OS title bar — see #window-controls below for
-        its replacement minimize/maximize/close. On macOS lib.rs restores
+        The one piece of brand text in the shell chrome is #toolbar-title, a
+        short tagline (探索未至之境) centered in the middle of the bar — a
+        deliberately quiet, understated line (see its rule in styles.css),
+        not a logo lockup, since the iframed harness content
+        already renders its own logo/title. It carries
+        pointer-events:none so the whole bar stays a working drag region:
+        Tauri's drag handler only reacts when the mousedown target itself
+        has data-tauri-drag-region (see drag.js in the tauri crate), so a
+        hit-testable child would otherwise leave a dead spot right in the
+        middle of the title bar. The hamburger button on the left is the
+        other exception: not a brand mark, just the entry point for actions
+        that have nowhere else to live on Windows/Linux (no native menu bar
+        — see menu.rs's set_menu() macOS-only gate), otherwise reachable
+        only via the tray icon. On Windows/Linux (frameless:
+        decorations:false) this bar carries data-tauri-drag-region so its
+        own empty space moves the window, replacing the OS title bar — see
+        #window-controls below for its replacement minimize/maximize/close.
+        On macOS lib.rs restores
         the native title bar (real traffic lights + title-bar drag) and its
         own native menu bar already covers the hamburger's actions, so
         app.js hides both the hamburger and the drag region there too (see
@@ -156,6 +172,7 @@
             <svg class="icon"><use href="#icon-package"></use></svg>
           </button>
         </div>
+        <div id="toolbar-title">探索未至之境</div>
         <div id="toolbar-actions">
           <button id="btn-toolbar-terminal" class="toolbar-btn" title="终端">
             <svg class="icon"><use href="#icon-terminal"></use></svg>
@@ -364,6 +381,17 @@
               <select id="plugin-market-category"></select>
               <svg class="select-chevron"><use href="#icon-chevron-down"></use></svg>
             </div>
+            <!--
+              Toggles between the two states filteredPlugins() sorts to (see
+              PLUGIN_SORT_DIRECTIONS in app.js) — desc is also the catalog's
+              own natural order (awesome-dsh-plugin.com lists highest-star
+              first already), so there's no third "unsorted" state to cycle
+              through, just these two.
+            -->
+            <button id="btn-plugin-market-sort" class="plugin-market-sort-btn" title="按 star 数排序">
+              <svg class="icon"><use href="#icon-star"></use></svg>
+              <svg id="plugin-market-sort-icon" class="icon"><use href="#icon-arrow-down"></use></svg>
+            </button>
           </div>
           <p id="plugin-market-status" class="muted"></p>
           <div id="plugin-market-grid"></div>
